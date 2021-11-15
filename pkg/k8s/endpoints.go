@@ -247,8 +247,10 @@ func ParseEndpointSliceV1(ep *slim_discovery_v1.EndpointSlice) (EndpointSliceID,
 					backend.Ports[name] = lbPort
 				}
 			}
+			fmt.Println("!!! FOOBAR", sub)
 			if sub.Hints != nil && (*sub.Hints).ForZones != nil {
 				hints := (*sub.Hints).ForZones
+				fmt.Println("!!! HINTS", hints)
 				backend.HintsForZones = make([]string, len(hints))
 				for i, hint := range hints {
 					backend.HintsForZones[i] = hint.Name

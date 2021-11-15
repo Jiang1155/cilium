@@ -230,6 +230,9 @@ func (s *ServiceCache) UpdateSelfNodeLabels(labels map[string]string) {
 		return
 	}
 
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
 	if s.selfNodeZoneLabel == zone {
 		return
 	}
@@ -296,35 +299,11 @@ func (s *ServiceCache) updateEndpoints(esID EndpointSliceID, newEndpoints *Endpo
 	}
 
 	// Check if the corresponding Endpoints resource is already available
-	svc, ok := s.services[esID.ServiceID]
-
-	if option.Config.EnableServiceTopology && ok && svc.TopologyAware && s.selfNodeZoneLabel != "" {
-		// TODO
-		filteredBackends := map[string]*Backend{}
-		for key, backend := range newEndpoints.Backends {
-			if len(backend.HintsForZones) == 0 {
-				break
-			}
-
-			zoneMatch := false
-			for _, hint := range backend.HintsForZones {
-				if hint == s.selfNodeZoneLabel {
-					zoneMatch = true
-					break
-				}
-			}
-			if zoneMatch {
-				filteredBackends[key] = backend
-			}
-		}
-		if len(filteredBackends) != 0 {
-			newEndpoints.Backends = filteredBackends
-		}
-	}
 
 	eps.Upsert(esID.EndpointSliceName, newEndpoints)
 
 	endpoints, serviceReady := s.correlateEndpoints(esID.ServiceID)
+	svc, ok := s.services[esID.ServiceID]
 	if ok && serviceReady {
 		swg.Add()
 		s.Events <- ServiceEvent{
@@ -477,15 +456,40 @@ func (s *ServiceCache) correlateEndpoints(id ServiceID) (*Endpoints, bool) {
 	endpoints := newEndpoints()
 
 	localEndpoints := s.endpoints[id].GetEndpoints()
+	svc, svcFound := s.services[id]
+
 	hasLocalEndpoints := localEndpoints != nil
 	if hasLocalEndpoints {
+		if option.Config.EnableServiceTopology && svcFound && svc.TopologyAware && s.selfNodeZoneLabel != "" {
+			filteredEndpoints := &Endpoints{Backends: map[string]*Backend{}}
+
+			for key, backend := range localEndpoints.Backends {
+				if len(backend.HintsForZones) == 0 {
+					break
+				}
+
+				zoneMatch := false
+				for _, hint := range backend.HintsForZones {
+					if hint == s.selfNodeZoneLabel {
+						zoneMatch = true
+						break
+					}
+				}
+				if zoneMatch {
+					filteredEndpoints.Backends[key] = backend
+				}
+			}
+			if len(filteredEndpoints.Backends) != 0 {
+				localEndpoints = filteredEndpoints
+			}
+		}
+
 		for ip, e := range localEndpoints.Backends {
 			endpoints.Backends[ip] = e
 		}
 	}
 
-	svc, hasExternalService := s.services[id]
-	if hasExternalService && svc.IncludeExternal {
+	if svcFound && svc.IncludeExternal {
 		externalEndpoints, hasExternalEndpoints := s.externalEndpoints[id]
 		if hasExternalEndpoints {
 			// remote cluster endpoints already contain all Endpoints from all
