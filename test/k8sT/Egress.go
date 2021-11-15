@@ -15,6 +15,7 @@
 package k8sTest
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	. "github.com/cilium/cilium/test/ginkgo-ext"
 	"github.com/cilium/cilium/test/helpers"
 	. "github.com/onsi/gomega"
+	v1 "k8s.io/api/core/v1"
 )
 
 var _ = SkipDescribeIf(func() bool {
@@ -149,6 +151,24 @@ var _ = SkipDescribeIf(func() bool {
 		// DNS query should work (pod-to-pod connectivity)
 		res = kubectl.ExecPodCmd(randomNamespace, srcPod, "dig kubernetes +time=2")
 		res.ExpectSuccess()
+
+		// When connecting to a pod which is selected by an egress
+		// policy, the reply traffic from this pod should not be SNATed
+		// with the egress IP
+		var extIPsService v1.Service
+		err := kubectl.Get(randomNamespace, fmt.Sprintf("service %s", "test-external-ips")).Unmarshal(&extIPsService)
+		ExpectWithOffset(1, err).Should(BeNil(), "Can not retrieve service %s", "test-external-ips")
+
+		_, k8s1IP := kubectl.GetNodeInfo(helpers.K8s1)
+		res = kubectl.Patch(randomNamespace, "service", "test-external-ips",
+			fmt.Sprintf(`{"spec":{"externalIPs":["%s"], "externalTrafficPolicy": "Local"}}`, k8s1IP))
+		ExpectWithOffset(1, res).Should(helpers.CMDSuccess(), "Error patching external IP service with node 1 IP")
+
+		outsideNodeName, outsideNodeIP := kubectl.GetNodeInfo(helpers.GetNodeWithoutCilium())
+		res = kubectl.ExecInHostNetNS(context.TODO(), outsideNodeName,
+			helpers.CurlFail("http://%s:%d", k8s1IP, extIPsService.Spec.Ports[0].Port))
+		res.ExpectSuccess()
+		res.ExpectMatchesRegexp(fmt.Sprintf("client_address=::ffff:%s\n", outsideNodeIP))
 	}
 
 	applyEgressPolicy := func() {
