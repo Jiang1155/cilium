@@ -4,6 +4,7 @@
 package k8s
 
 import (
+	"fmt"
 	"net"
 
 	"github.com/cilium/cilium/pkg/datapath"
@@ -225,19 +226,38 @@ func (s *ServiceCache) UpdateSelfNodeLabels(labels map[string]string) {
 		return
 	}
 
-	zone, ok := labels[LabelTopologyZone]
-	if !ok {
-		return
-	}
-
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
+	zone, ok := labels[LabelTopologyZone]
+	if !ok && s.selfNodeZoneLabel == "" {
+		return
+	}
 
 	if s.selfNodeZoneLabel == zone {
 		return
 	}
 
-	// TODO
+	s.selfNodeZoneLabel = zone
+
+	for id, svc := range s.services {
+		if !svc.TopologyAware {
+			continue
+		}
+
+		fmt.Println("!!! svc", id)
+
+		if endpoints, ready := s.correlateEndpoints(id); ready {
+			s.Events <- ServiceEvent{
+				Action:     UpdateService,
+				ID:         id,
+				Service:    svc,
+				OldService: svc,
+				Endpoints:  endpoints,
+				SWG:        nil,
+			}
+		}
+	}
 }
 
 func (s *ServiceCache) EnsureService(svcID ServiceID, swg *lock.StoppableWaitGroup) bool {

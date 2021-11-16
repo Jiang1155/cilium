@@ -469,7 +469,11 @@ func (k *K8sWatcher) EnableK8sWatcher(ctx context.Context, resources []string) e
 
 func (k *K8sWatcher) k8sServiceHandler() {
 	eventHandler := func(event k8s.ServiceEvent) {
-		defer event.SWG.Done()
+		defer func() {
+			if swg := event.SWG; swg != nil {
+				swg.Done()
+			}
+		}()
 
 		svc := event.Service
 

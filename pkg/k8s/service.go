@@ -211,7 +211,7 @@ func ParseService(svc *slim_corev1.Service, nodeAddressing datapath.NodeAddressi
 
 	if option.Config.EnableServiceTopology {
 		// TODO other checks
-		if val, ok := svc.Labels[labelTopologyAwareHints]; ok && (val == "auto" || val == "Auto") {
+		if val, ok := svc.Annotations[annotationTopologyAwareHints]; ok && (val == "auto" || val == "Auto") {
 			svcInfo.TopologyAware = true
 		}
 	}
@@ -219,7 +219,7 @@ func ParseService(svc *slim_corev1.Service, nodeAddressing datapath.NodeAddressi
 	return svcID, svcInfo
 }
 
-const labelTopologyAwareHints = "service.kubernetes.io/topology-aware-hints"
+const annotationTopologyAwareHints = "service.kubernetes.io/topology-aware-hints"
 
 // ServiceID identifies the Kubernetes service
 type ServiceID struct {
