@@ -499,7 +499,9 @@ ipv4_extract_tuple(struct __ctx_buff *ctx, struct ipv4_ct_tuple *tuple,
 	tuple->nexthdr = ip4->protocol;
 
 	if (unlikely(tuple->nexthdr != IPPROTO_TCP &&
-		     tuple->nexthdr != IPPROTO_UDP))
+		     tuple->nexthdr != IPPROTO_UDP &&
+		     tuple->nexthdr != IPPROTO_IPIP))
+
 		return DROP_CT_UNKNOWN_PROTO;
 
 	tuple->daddr = ip4->daddr;
@@ -615,7 +617,10 @@ ct_extract_ports4(struct __ctx_buff *ctx, int off, int dir,
 			}
 		}
 		break;
-
+	case IPPROTO_IPIP:
+		off = off + 20;
+		cilium_dbg(ctx, DBG_DECAP, 777, 777);
+		/* fall through, assume tcp*/
 	case IPPROTO_TCP:
 		err = ipv4_ct_extract_l4_ports(ctx, off, dir, tuple, NULL);
 		if (err < 0)
@@ -725,7 +730,10 @@ static __always_inline int ct_lookup4(const void *map,
 			}
 		}
 		break;
-
+	case IPPROTO_IPIP:
+		cilium_dbg(ctx, DBG_DECAP, 666, 666);
+		off = off + 20;
+		/* fall through */
 	case IPPROTO_TCP:
 		err = ipv4_ct_extract_l4_ports(ctx, off, dir, tuple, &has_l4_header);
 		if (err < 0)
