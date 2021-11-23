@@ -209,8 +209,10 @@ ctx_adjust_hroom(struct xdp_md *ctx, const __s32 len_diff, const __u32 mode,
 	void *data, *data_end;
 	int ret;
 
-	build_bug_on(len_diff <= 0 || len_diff >= 64);
+	build_bug_on(len_diff == 0 || len_diff >= 64);
 	build_bug_on(mode != BPF_ADJ_ROOM_NET);
+	if (len_diff < 0)
+		return xdp_adjust_head(ctx, 0 - len_diff);
 
 	ret = xdp_adjust_head(ctx, -len_diff);
 
