@@ -1382,6 +1382,19 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 	void *data, *data_end;
 	struct iphdr *ip4;
 
+#if DSR_ENCAP_MODE == DSR_ENCAP_IPIP
+	if (!revalidate_data(ctx, &data, &data_end, &ip4))
+		return DROP_INVALID;
+	*dsr = false;
+	if (ip4->protocol == IPPROTO_IPIP) {
+		if (ctx_adjust_hroom(ctx, -20,
+				BPF_ADJ_ROOM_NET,
+				ctx_adjust_hroom_dsr_flags()) < 0)
+			return DROP_INVALID;
+	}
+
+#elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
+
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
 
@@ -1413,6 +1426,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 				return DROP_INVALID;
 		}
 	}
+#endif /* DSR_ENCAP_MODE */
 
 	return 0;
 }
