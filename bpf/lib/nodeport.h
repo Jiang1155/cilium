@@ -1377,10 +1377,41 @@ static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 }
 #endif /* DSR_ENCAP_MODE */
 
-static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
+static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int ct)
 {
 	void *data, *data_end;
 	struct iphdr *ip4;
+
+#if DSR_ENCAP_MODE == DSR_ENCAP_IPIP
+	{
+		struct iphdr iph_inner;
+		const int l3_off = ETH_HLEN;
+
+		ct = 0;
+		if (!revalidate_data(ctx, &data, &data_end, &ip4))
+			return DROP_INVALID;
+		*dsr = false;
+		if (ip4->protocol == IPPROTO_IPIP) {
+			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
+					&iph_inner, sizeof(iph_inner)) < 0)
+				return DROP_INVALID;
+
+			/* this will remove inner iph */
+			if (ctx_adjust_hroom(ctx, -20,
+					BPF_ADJ_ROOM_NET,
+					ctx_adjust_hroom_dsr_flags()) < 0)
+				return DROP_INVALID;
+
+			/* replace outer iph with inner iph */
+			if (ctx_store_bytes(ctx, l3_off,
+				&iph_inner, sizeof(iph_inner), 0) < 0)
+				return DROP_WRITE_ERROR;
+		}
+	}
+
+#elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
+	if (ct != CT_NEW)
+		return 0;
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
@@ -1413,6 +1444,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 				return DROP_INVALID;
 		}
 	}
+#endif /* DSR_ENCAP_MODE */
 
 	return 0;
 }

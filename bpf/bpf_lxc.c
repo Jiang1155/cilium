@@ -548,8 +548,10 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx,
 
 	tuple.nexthdr = ip4->protocol;
 
+	/* disable src ip check --- jiang 
 	if (unlikely(!is_valid_lxc_src_ipv4(ip4)))
 		return DROP_INVALID_SIP;
+	*/
 
 	tuple.daddr = ip4->daddr;
 	tuple.saddr = ip4->saddr;
@@ -1413,19 +1415,19 @@ ipv4_policy(struct __ctx_buff *ctx, int ifindex, __u32 src_label, __u8 *reason,
 skip_policy_enforcement:
 #endif /* !ENABLE_HOST_SERVICES_FULL && !DISABLE_LOOPBACK_LB */
 
-	if (ret == CT_NEW) {
+
 #ifdef ENABLE_DSR
 	{
 		bool dsr = false;
 
-		ret = handle_dsr_v4(ctx, &dsr);
+		ret = handle_dsr_v4(ctx, &dsr, ret);
 		if (ret != 0)
 			return ret;
 
 		ct_state_new.dsr = dsr;
 	}
 #endif /* ENABLE_DSR */
-
+	if (ret == CT_NEW) {
 		ct_state_new.src_sec_id = src_label;
 		ct_state_new.node_port = ct_state.node_port;
 		ct_state_new.ifindex = ct_state.ifindex;
