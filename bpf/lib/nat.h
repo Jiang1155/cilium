@@ -374,6 +374,7 @@ static __always_inline int snat_v4_rewrite_egress(struct __ctx_buff *ctx,
 	if (csum.offset &&
 	    csum_l4_replace(ctx, off, &csum, 0, sum, flags) < 0)
 		return DROP_CSUM_L4;
+	
 	return 0;
 }
 
@@ -493,6 +494,8 @@ static __always_inline __maybe_unused int snat_v4_create_dsr(struct __ctx_buff *
 	state.common.created = bpf_mono_now();
 	state.to_saddr = to_saddr;
 	state.to_sport = to_sport;
+
+	printk("jiang: to_sport is %x\n", (unsigned short) state.to_sport);
 
 	ret = map_update_elem(&SNAT_MAPPING_IPV4, &tuple, &state, 0);
 	if (ret)

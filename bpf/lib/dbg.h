@@ -136,7 +136,7 @@ enum {
 	DBG_CAPTURE_SNAT_PRE,
 	DBG_CAPTURE_SNAT_POST,
 };
-
+#define DEBUG
 #ifndef EVENT_SOURCE
 #define EVENT_SOURCE 0
 #endif

@@ -1377,10 +1377,73 @@ static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 }
 #endif /* DSR_ENCAP_MODE */
 
-static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
+static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int ct)
 {
 	void *data, *data_end;
 	struct iphdr *ip4;
+
+#if DSR_ENCAP_MODE == DSR_ENCAP_IPIP
+	{
+		struct iphdr iph_inner __maybe_unused;
+		const int l3_off __maybe_unused = ETH_HLEN;
+		__be32 vip __maybe_unused;
+		__be32 podip;
+		__be32 sip __maybe_unused;
+		__be32 sum __maybe_unused;
+		__be16 dport __maybe_unused = 0;
+		int l4_off __maybe_unused;
+
+		ct = 0;
+		if (!revalidate_data(ctx, &data, &data_end, &ip4))
+			return DROP_INVALID;
+		*dsr = false;
+		podip = ip4->daddr;
+
+		if (ip4->protocol == IPPROTO_IPIP) {
+			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
+					&iph_inner, sizeof(iph_inner)) < 0)
+				return DROP_INVALID;
+
+			*dsr = false;
+			/* this will remove inner iph */
+			if (ctx_adjust_hroom(ctx, -20,
+					BPF_ADJ_ROOM_NET,
+					ctx_adjust_hroom_dsr_flags()) < 0)
+				return DROP_INVALID;
+
+			vip = iph_inner.daddr;
+			iph_inner.daddr = podip;
+			//printk("jiang: inner src is %lx\n", (unsigned long) iph_inner.saddr);
+			sip = iph_inner.saddr;
+
+			sum = csum_diff(&vip, 4, &iph_inner.daddr, 4, 0);
+
+			/* replace outer iph with inner iph */
+			if (ctx_store_bytes(ctx, l3_off,
+				&iph_inner, sizeof(iph_inner), 0) < 0)
+				return DROP_WRITE_ERROR;
+			
+			if (l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
+					    0, sum, 0) < 0)
+			    return DROP_CSUM_L3;
+
+			if (ct == CT_NEW) {
+				if (!revalidate_data(ctx, &data, &data_end, &ip4))
+					return DROP_INVALID;
+			
+				l4_off = l3_off + ipv4_hdrlen(ip4);
+				if (ctx_load_bytes(ctx, l4_off +2, &dport, 2) < 0)
+					return DROP_CT_INVALID_HDR;
+
+				if (snat_v4_create_dsr(ctx, vip, dport) < 0)
+					return DROP_INVALID;
+			}
+		}
+	}
+
+#elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
+	if (ct != CT_NEW)
+		return 0;
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
@@ -1413,6 +1476,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 				return DROP_INVALID;
 		}
 	}
+#endif /* DSR_ENCAP_MODE */
 
 	return 0;
 }
