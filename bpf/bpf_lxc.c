@@ -1432,7 +1432,7 @@ skip_policy_enforcement:
 #endif /* !ENABLE_HOST_SERVICES_FULL && !DISABLE_LOOPBACK_LB */
 
 #ifdef ENABLE_DSR
-	if (ret == CT_NEW || ret == CT_REOPENED) {
+	{
 		bool dsr = false;
 		int ret2;
 
