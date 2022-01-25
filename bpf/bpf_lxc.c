@@ -1436,7 +1436,7 @@ skip_policy_enforcement:
 		bool dsr = false;
 		int ret2;
 
-		ret2 = handle_dsr_v4(ctx, &dsr);
+		ret2 = handle_dsr_v4(ctx, &dsr, ret);
 		if (ret2 != 0)
 			return ret2;
 
