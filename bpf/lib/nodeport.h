@@ -1424,7 +1424,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 	}
 
 #elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
-	if (ct != CT_NEW)
+	if (ct != CT_NEW && ct!= CT_REOPENED)
 		return 0;
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
