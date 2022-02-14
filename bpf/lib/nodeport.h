@@ -1376,7 +1376,6 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 		__be16 dport __maybe_unused = 0;
 		int l4_off __maybe_unused;
 
-		ct = 0;
 		if (!revalidate_data(ctx, &data, &data_end, &ip4))
 			return DROP_INVALID;
 		*dsr = false;
