@@ -1416,6 +1416,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 				if (ctx_load_bytes(ctx, l4_off +2, &dport, 2) < 0)
 					return DROP_CT_INVALID_HDR;
 
+				*dsr = true;
 				if (snat_v4_create_dsr(ctx, vip, dport) < 0)
 					return DROP_INVALID;
 			}
