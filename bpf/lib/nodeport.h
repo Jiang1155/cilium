@@ -1245,6 +1245,43 @@ static __always_inline __be32 rss_gen_src4(__be32 client, __be32 l4_hint)
 	return src;
 }
 
+static __always_inline int dsr_set_opt_src(struct __ctx_buff *ctx,
+					struct iphdr *ip4, __be32 svc_port,
+					int *ohead)
+{
+	__u32 iph_old, iph_new, opt;
+	__u16 tot_len = bpf_ntohs(ip4->tot_len) + sizeof(opt);
+	__be32 sum;
+
+	if (dsr_is_too_big(ctx, tot_len)) {
+		*ohead = sizeof(opt);
+		return DROP_FRAG_NEEDED;
+	}
+
+	iph_old = *(__u32 *)ip4;
+	ip4->ihl += sizeof(opt) >> 2;
+	ip4->tot_len = bpf_htons(tot_len);
+	iph_new = *(__u32 *)ip4;
+
+	opt = bpf_htonl(DSR_IPV4_OPT_32 | svc_port);
+
+	sum = csum_diff(&iph_old, 4, &iph_new, 4, 0);
+	sum = csum_diff(NULL, 0, &opt, sizeof(opt), sum);
+
+	if (ctx_adjust_hroom(ctx, sizeof(opt), BPF_ADJ_ROOM_NET,
+			     ctx_adjust_hroom_dsr_flags()))
+		return DROP_INVALID;
+
+	if (ctx_store_bytes(ctx, ETH_HLEN + sizeof(*ip4),
+			    &opt, sizeof(opt), 0) < 0)
+		return DROP_INVALID;
+	if (l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
+			    0, sum, 0) < 0)
+		return DROP_CSUM_L3;
+
+	return 0;
+}
+
 /*
  * Original packet: [clientIP:clientPort -> serviceIP:servicePort] } IP/L4
  *
@@ -1585,9 +1622,27 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	}
 
 #if DSR_ENCAP_MODE == DSR_ENCAP_IPIP
+	ret = dsr_set_opt_src(ctx, ip4,
+			      ctx_load_meta(ctx, CB_SRC_PORT), &ohead);
+	printk("jiang: set opt src ret %d", ret);
+	if (unlikely(ret)) {
+		if (dsr_fail_needs_reply(ret))
+			return dsr_reply_icmp4(ctx, ip4, ret, ohead);
+		goto drop_err;
+	}
+	
+	if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+		printk("jiang: validate data failed");
+		ret = DROP_INVALID;
+		goto drop_err;
+	}
+
 	ret = dsr_set_ipip4(ctx, ip4,
-			    ctx_load_meta(ctx, CB_ADDR_V4),
-			    ctx_load_meta(ctx, CB_HINT), &ohead);
+				ctx_load_meta(ctx, CB_ADDR_V4),
+				ctx_load_meta(ctx, CB_HINT), &ohead);
+
+	printk("jiang: set ipip %d", ret);
+
 #elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
 	ret = dsr_set_opt4(ctx, ip4,
 			   ctx_load_meta(ctx, CB_ADDR_V4),
@@ -1634,8 +1689,10 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	}
 out_send:
 	cilium_capture_out(ctx);
+	printk("jiang: nodeport return ok");
 	return ctx_redirect(ctx, fib_params.l.ifindex, 0);
 drop_err:
+	printk("jiang: nodeport ERROR!");
 	return send_drop_notify_error(ctx, 0, ret, CTX_ACT_DROP, METRIC_EGRESS);
 }
 #endif /* ENABLE_DSR */
@@ -1922,6 +1979,7 @@ redo_local:
 			ctx_store_meta(ctx, CB_HINT,
 				       ((__u32)tuple.sport << 16) | tuple.dport);
 			ctx_store_meta(ctx, CB_ADDR_V4, tuple.daddr);
+			ctx_store_meta(ctx, CB_SRC_PORT, key.dport);
 #elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
 			ctx_store_meta(ctx, CB_PORT, key.dport);
 			ctx_store_meta(ctx, CB_ADDR_V4, key.address);
