@@ -1263,7 +1263,7 @@ static __always_inline int dsr_set_opt_src(struct __ctx_buff *ctx,
 	ip4->tot_len = bpf_htons(tot_len);
 	iph_new = *(__u32 *)ip4;
 
-	opt = bpf_htonl(DSR_IPV4_OPT_32 | svc_port);
+	opt = bpf_htonl(DSR_IPV4_OPT_16 | svc_port);
 
 	sum = csum_diff(&iph_old, 4, &iph_new, 4, 0);
 	sum = csum_diff(NULL, 0, &opt, sizeof(opt), sum);
@@ -1291,31 +1291,52 @@ static __always_inline int dsr_set_opt_src(struct __ctx_buff *ctx,
 static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 					 const struct iphdr *ip4,
 					 __be32 backend_addr,
-					 __be32 l4_hint, int *ohead)
+					 __be32 l4_hint, 
+					 __be32 svc_port, int *ohead)
 {
 	__u16 tot_len = bpf_ntohs(ip4->tot_len) + sizeof(*ip4);
 	const int l3_off = ETH_HLEN;
 	__be32 sum;
-	struct {
-		__be16 tot_len;
-		__be16 id;
-		__be16 frag_off;
-		__u8   ttl;
-		__u8   protocol;
-		__be32 saddr;
-		__be32 daddr;
-	} tp_old = {
+	__u8 ihlver;
+
+	struct iphds {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u8	ihl:4,
+		version:4;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u8	version:4,
+  		ihl:4;
+#else
+#error	"Please fix <asm/byteorder.h>"
+#endif
+	__u8	tos;
+	__be16	tot_len;
+	__be16	id;
+	__u8	ttl;
+	__u8	protocol;
+	__be32	saddr;
+	__be32	daddr;
+	__be32 	opt;
+	} ;
+
+	struct iphds tp_old = {
+		.ihl		= ip4->ihl,
+		.version	= ip4->version,
 		.tot_len	= ip4->tot_len,
 		.ttl		= ip4->ttl,
 		.protocol	= ip4->protocol,
 		.saddr		= ip4->saddr,
 		.daddr		= ip4->daddr,
+		.opt		= bpf_htonl(DSR_IPV4_OPT_16 |svc_port),
 	}, tp_new = {
+		.ihl 		= 5,
+		.version	= ip4->version,
 		.tot_len	= bpf_htons(tot_len),
 		.ttl		= IPDEFTTL,
 		.protocol	= IPPROTO_IPIP,
 		.saddr		= rss_gen_src4(ip4->saddr, l4_hint),
 		.daddr		= backend_addr,
+		.opt		= 0x0,
 	};
 
 	if (dsr_is_too_big(ctx, tot_len)) {
@@ -1326,7 +1347,12 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 	if (ctx_adjust_hroom(ctx, sizeof(*ip4), BPF_ADJ_ROOM_NET,
 			     ctx_adjust_hroom_dsr_flags()))
 		return DROP_INVALID;
-	sum = csum_diff(&tp_old, 16, &tp_new, 16, 0);
+	sum = csum_diff(&tp_old, 20, &tp_new, 20, 0);
+	
+	ihlver = *((__u8*)&tp_new);
+	if (ctx_store_bytes(ctx, l3_off,
+			    &ihlver, 1, 0) < 0)
+		return DROP_WRITE_ERROR;
 	if (ctx_store_bytes(ctx, l3_off + offsetof(struct iphdr, tot_len),
 			    &tp_new.tot_len, 2, 0) < 0)
 		return DROP_WRITE_ERROR;
@@ -1422,10 +1448,27 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
 					&iph_inner, sizeof(iph_inner)) < 0)
 				return DROP_INVALID;
+			
+			/* Check whether IPv4 header contains a 64-bit option (IPv4 header
+			* w/o option (5 x 32-bit words) + the IPIP DSR option (1 x 32-bit words)).
+			*/
+			if (iph_inner.ihl == 0x6) {
+				__u32 opt;
 
-			*dsr = false;
+				if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr) *2,
+						&opt, sizeof(opt)) < 0)
+					return DROP_INVALID;
+
+				opt = bpf_ntohl(opt);
+				if ((opt & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_16) {
+					dport = opt & DSR_IPV4_DPORT_MASK;
+					//if (snat_v4_create_dsr(ctx, address, dport) < 0)
+					//	return DROP_INVALID;
+				}
+			}
+
 			/* this will remove inner iph */
-			if (ctx_adjust_hroom(ctx, -20,
+			if (ctx_adjust_hroom(ctx, -(ip4->ihl*4),
 					BPF_ADJ_ROOM_NET,
 					ctx_adjust_hroom_dsr_flags()) < 0)
 				return DROP_INVALID;
@@ -1446,13 +1489,6 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 			    return DROP_CSUM_L3;
 
 			if (ct == CT_NEW) {
-				if (!revalidate_data(ctx, &data, &data_end, &ip4))
-					return DROP_INVALID;
-
-				l4_off = l3_off + ipv4_hdrlen(ip4);
-				if (ctx_load_bytes(ctx, l4_off +2, &dport, 2) < 0)
-					return DROP_CT_INVALID_HDR;
-
 				*dsr = true;
 				if (snat_v4_create_dsr(ctx, vip, dport) < 0)
 					return DROP_INVALID;
@@ -1639,7 +1675,8 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 
 	ret = dsr_set_ipip4(ctx, ip4,
 				ctx_load_meta(ctx, CB_ADDR_V4),
-				ctx_load_meta(ctx, CB_HINT), &ohead);
+				ctx_load_meta(ctx, CB_HINT),
+				ctx_load_meta(ctx, CB_SRC_PORT), &ohead);
 
 	printk("jiang: set ipip %d", ret);
 
