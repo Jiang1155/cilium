@@ -1435,9 +1435,10 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 		__be32 vip __maybe_unused;
 		__be32 podip;
 		__be32 sip __maybe_unused;
-		__be32 sum __maybe_unused;
+		__be32 sum __maybe_unused = 0;
 		__be16 dport __maybe_unused = 0;
 		int l4_off __maybe_unused;
+		struct iphdr iph_old;
 
 		if (!revalidate_data(ctx, &data, &data_end, &ip4))
 			return DROP_INVALID;
@@ -1449,15 +1450,21 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 					&iph_inner, sizeof(iph_inner)) < 0)
 				return DROP_INVALID;
 			
+			iph_old = iph_inner;
+
 			/* Check whether IPv4 header contains a 64-bit option (IPv4 header
 			* w/o option (5 x 32-bit words) + the IPIP DSR option (1 x 32-bit words)).
 			*/
 			if (iph_inner.ihl == 0x6) {
 				__u32 opt;
+				__u32 noneopt = 0;
+				__u16 tot_len = bpf_ntohs(iph_inner.tot_len) - sizeof(opt);
 
 				if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr) *2,
 						&opt, sizeof(opt)) < 0)
 					return DROP_INVALID;
+
+				sum = csum_diff(&opt, 4, &noneopt, 4, 0);
 
 				opt = bpf_ntohl(opt);
 				if ((opt & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_16) {
@@ -1465,10 +1472,14 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 					//if (snat_v4_create_dsr(ctx, address, dport) < 0)
 					//	return DROP_INVALID;
 				}
+
+				iph_inner.ihl = 0x5;
+				iph_inner.tot_len = bpf_htons(tot_len);
+				sum = csum_diff(&iph_old, 4, &iph_inner, 4, sum);
 			}
 
 			/* this will remove inner iph */
-			if (ctx_adjust_hroom(ctx, -(ip4->ihl*4),
+			if (ctx_adjust_hroom(ctx, -(iph_old.ihl*4),
 					BPF_ADJ_ROOM_NET,
 					ctx_adjust_hroom_dsr_flags()) < 0)
 				return DROP_INVALID;
@@ -1477,7 +1488,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 			iph_inner.daddr = podip;
 			sip = iph_inner.saddr;
 
-			sum = csum_diff(&vip, 4, &iph_inner.daddr, 4, 0);
+			sum = csum_diff(&vip, 4, &iph_inner.daddr, 4, sum);
 
 			/* replace outer iph with inner iph */
 			if (ctx_store_bytes(ctx, l3_off,

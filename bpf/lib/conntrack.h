@@ -623,7 +623,7 @@ ct_extract_ports4(struct __ctx_buff *ctx, int off, int dir,
 			__u8 ihl;
 			if (ctx_load_bytes(ctx, off, &ver_ihl, 1) < 0)
 				return DROP_CT_INVALID_HDR;
-			ihl = (ver_ihl & 0xf0) >> 4;
+			ihl = (ver_ihl & 0x0f);
 			off = off + (ihl << 2);
 			printk("jiang: ihl is %d", ihl);
 		}
@@ -745,7 +745,7 @@ static __always_inline int ct_lookup4(const void *map,
 
 			if (ctx_load_bytes(ctx, off, &ver_ihl, 1) < 0)
 				return DROP_CT_INVALID_HDR;
-			ihl = (ver_ihl & 0xf0) >> 4;
+			ihl = (ver_ihl & 0x0f);
 			
 			if (ctx_load_bytes(ctx, off +
 					offsetof(struct iphdr, protocol), &protocol, 1) < 0)
