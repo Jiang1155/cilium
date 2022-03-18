@@ -521,7 +521,6 @@ enum {
  * [1]: https://www.iana.org/assignments/ip-parameters/ip-parameters.xhtml
  */
 #define DSR_IPV4_OPT_32		0x9a080000
-#define DSR_IPV4_OPT_16		0x9a040000
 #define DSR_IPV4_OPT_MASK	0xffff0000
 #define DSR_IPV4_DPORT_MASK	0x0000ffff
 
@@ -594,6 +593,7 @@ enum {
 #define CB_NAT			CB_NAT46_STATE	/* Alias, non-overlapping */
 #define	CB_ADDR_V6_3		CB_NAT46_STATE	/* Alias, non-overlapping */
 #define	CB_FROM_HOST		CB_NAT46_STATE	/* Alias, non-overlapping */
+#define CB_ADDR_V4_2		CB_NAT46_STATE	/* Alias, non-overlapping */
 	CB_CT_STATE,
 #define	CB_ADDR_V6_4		CB_CT_STATE	/* Alias, non-overlapping */
 #define	CB_ENCRYPT_DST		CB_CT_STATE	/* Alias, non-overlapping,

@@ -1245,43 +1245,6 @@ static __always_inline __be32 rss_gen_src4(__be32 client, __be32 l4_hint)
 	return src;
 }
 
-static __always_inline int dsr_set_opt_src(struct __ctx_buff *ctx,
-					struct iphdr *ip4, __be32 svc_port,
-					int *ohead)
-{
-	__u32 iph_old, iph_new, opt;
-	__u16 tot_len = bpf_ntohs(ip4->tot_len) + sizeof(opt);
-	__be32 sum;
-
-	if (dsr_is_too_big(ctx, tot_len)) {
-		*ohead = sizeof(opt);
-		return DROP_FRAG_NEEDED;
-	}
-
-	iph_old = *(__u32 *)ip4;
-	ip4->ihl += sizeof(opt) >> 2;
-	ip4->tot_len = bpf_htons(tot_len);
-	iph_new = *(__u32 *)ip4;
-
-	opt = bpf_htonl(DSR_IPV4_OPT_16 | svc_port);
-
-	sum = csum_diff(&iph_old, 4, &iph_new, 4, 0);
-	sum = csum_diff(NULL, 0, &opt, sizeof(opt), sum);
-
-	if (ctx_adjust_hroom(ctx, sizeof(opt), BPF_ADJ_ROOM_NET,
-			     ctx_adjust_hroom_dsr_flags()))
-		return DROP_INVALID;
-
-	if (ctx_store_bytes(ctx, ETH_HLEN + sizeof(*ip4),
-			    &opt, sizeof(opt), 0) < 0)
-		return DROP_INVALID;
-	if (l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
-			    0, sum, 0) < 0)
-		return DROP_CSUM_L3;
-
-	return 0;
-}
-
 /*
  * Original packet: [clientIP:clientPort -> serviceIP:servicePort] } IP/L4
  *
@@ -1292,7 +1255,8 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 					 const struct iphdr *ip4,
 					 __be32 backend_addr,
 					 __be32 l4_hint, 
-					 __be32 svc_port, int *ohead)
+					 __be32 svc_port, 
+					 __be32 svc_addr, int *ohead)
 {
 	__u16 tot_len = bpf_ntohs(ip4->tot_len) + sizeof(*ip4);
 	const int l3_off = ETH_HLEN;
@@ -1316,7 +1280,8 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 	__u8	protocol;
 	__be32	saddr;
 	__be32	daddr;
-	__be32 	opt;
+	__be32 	opt0;
+	__be32	opt1;
 	} ;
 
 	struct iphds tp_old = {
@@ -1327,7 +1292,8 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 		.protocol	= ip4->protocol,
 		.saddr		= ip4->saddr,
 		.daddr		= ip4->daddr,
-		.opt		= bpf_htonl(DSR_IPV4_OPT_16 |svc_port),
+		.opt0		= bpf_htonl(DSR_IPV4_OPT_32 |svc_port),
+		.opt1 		= bpf_htonl(svc_addr),
 	}, tp_new = {
 		.ihl 		= 5,
 		.version	= ip4->version,
@@ -1336,7 +1302,8 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 		.protocol	= IPPROTO_IPIP,
 		.saddr		= rss_gen_src4(ip4->saddr, l4_hint),
 		.daddr		= backend_addr,
-		.opt		= 0x0,
+		.opt0		= 0x0,
+		.opt1		= 0x0,
 	};
 
 	if (dsr_is_too_big(ctx, tot_len)) {
@@ -1344,10 +1311,16 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 		return DROP_FRAG_NEEDED;
 	}
 
+	if (ip4->ihl == 0x5) {
+		tp_old.opt0 = 0;
+		tp_old.opt1 = 0;
+	}
+
 	if (ctx_adjust_hroom(ctx, sizeof(*ip4), BPF_ADJ_ROOM_NET,
 			     ctx_adjust_hroom_dsr_flags()))
 		return DROP_INVALID;
-	sum = csum_diff(&tp_old, 20, &tp_new, 20, 0);
+
+	sum = csum_diff(&tp_old, 24, &tp_new, 24, 0);
 	
 	ihlver = *((__u8*)&tp_new);
 	if (ctx_store_bytes(ctx, l3_off,
@@ -1367,7 +1340,9 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 		return DROP_CSUM_L3;
 	return 0;
 }
-#elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
+#endif /* DSR_ENCAP_MODE */
+
+#if DSR_ENCAP_MODE == DSR_ENCAP_NONE || DSR_ENCAP_MODE == DSR_ENCAP_IPIP
 static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 					struct iphdr *ip4, __be32 svc_addr,
 					__be32 svc_port, int *ohead)
@@ -1423,7 +1398,7 @@ static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 }
 #endif /* DSR_ENCAP_MODE */
 
-static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int ct)
+static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 {
 	void *data, *data_end;
 	struct iphdr *ip4;
@@ -1439,6 +1414,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 		__be16 dport __maybe_unused = 0;
 		int l4_off __maybe_unused;
 		struct iphdr iph_old;
+		__be32 address __maybe_unused = 0;
 
 		if (!revalidate_data(ctx, &data, &data_end, &ip4))
 			return DROP_INVALID;
@@ -1449,28 +1425,34 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
 					&iph_inner, sizeof(iph_inner)) < 0)
 				return DROP_INVALID;
-			
 			iph_old = iph_inner;
 
 			/* Check whether IPv4 header contains a 64-bit option (IPv4 header
-			* w/o option (5 x 32-bit words) + the IPIP DSR option (1 x 32-bit words)).
+			* w/o option (5 x 32-bit words) + the DSR option (2 x 32-bit words)).
 			*/
-			if (iph_inner.ihl == 0x6) {
-				__u32 opt;
-				__u32 noneopt = 0;
-				__u16 tot_len = bpf_ntohs(iph_inner.tot_len) - sizeof(opt);
+			if (iph_inner.ihl == 0x7) {
+				__u32 opt1 = 0, opt2 = 0;
+				__u32 noneopt = 0, noneopt2 = 0;
+				__u16 tot_len = bpf_ntohs(iph_inner.tot_len) - sizeof(opt1)*2;
 
-				if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr) *2,
-						&opt, sizeof(opt)) < 0)
+				if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr)*2,
+						&opt1, sizeof(opt1)) < 0)
 					return DROP_INVALID;
 
-				sum = csum_diff(&opt, 4, &noneopt, 4, 0);
+				sum = csum_diff(&opt1, 4, &noneopt, 4, 0);
 
-				opt = bpf_ntohl(opt);
-				if ((opt & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_16) {
-					dport = opt & DSR_IPV4_DPORT_MASK;
-					//if (snat_v4_create_dsr(ctx, address, dport) < 0)
-					//	return DROP_INVALID;
+				opt1 = bpf_ntohl(opt1);
+				if ((opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_32) {
+					if (ctx_load_bytes(ctx, ETH_HLEN +
+							sizeof(struct iphdr)*2 +
+							sizeof(opt1),
+							&opt2, sizeof(opt2)) < 0)
+						return DROP_INVALID;
+					sum = csum_diff(&opt2, 4, &noneopt2, 4, sum);
+
+					opt2 = bpf_ntohl(opt2);
+					dport = opt1 & DSR_IPV4_DPORT_MASK;
+					address = opt2;
 				}
 
 				iph_inner.ihl = 0x5;
@@ -1481,14 +1463,12 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 			/* this will remove inner iph */
 			if (ctx_adjust_hroom(ctx, -(iph_old.ihl*4),
 					BPF_ADJ_ROOM_NET,
-					ctx_adjust_hroom_dsr_flags()) < 0)
+					ctx_adjust_hroom_dsr_flags()) < 0) {
 				return DROP_INVALID;
+			}
 
 			vip = iph_inner.daddr;
-			iph_inner.daddr = podip;
 			sip = iph_inner.saddr;
-
-			sum = csum_diff(&vip, 4, &iph_inner.daddr, 4, sum);
 
 			/* replace outer iph with inner iph */
 			if (ctx_store_bytes(ctx, l3_off,
@@ -1497,19 +1477,23 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr, int 
 
 			if (l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
 					    0, sum, 0) < 0)
-			    return DROP_CSUM_L3;
+				return DROP_CSUM_L3;
 
-			if (ct == CT_NEW) {
+			//if (ct == CT_NEW) 
+			//	printk("got new connection");
+
+			if (iph_old.ihl == 0x7 ) {
 				*dsr = true;
-				if (snat_v4_create_dsr(ctx, vip, dport) < 0)
+				if (snat_v4_create_dsr(ctx, address, dport) < 0) {
 					return DROP_INVALID;
+				}
 			}
 		}
 	}
 
 #elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
-	if (ct != CT_NEW && ct!= CT_REOPENED)
-		return 0;
+	//if (ct != CT_NEW && ct!= CT_REOPENED)
+	//	return 0;
 
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
@@ -1669,8 +1653,9 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	}
 
 #if DSR_ENCAP_MODE == DSR_ENCAP_IPIP
-	ret = dsr_set_opt_src(ctx, ip4,
-			      ctx_load_meta(ctx, CB_SRC_PORT), &ohead);
+	ret = dsr_set_opt4(ctx, ip4,
+			   ctx_load_meta(ctx, CB_ADDR_V4_2),
+			   ctx_load_meta(ctx, CB_SRC_PORT), &ohead);
 	printk("jiang: set opt src ret %d", ret);
 	if (unlikely(ret)) {
 		if (dsr_fail_needs_reply(ret))
@@ -1687,7 +1672,9 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	ret = dsr_set_ipip4(ctx, ip4,
 				ctx_load_meta(ctx, CB_ADDR_V4),
 				ctx_load_meta(ctx, CB_HINT),
-				ctx_load_meta(ctx, CB_SRC_PORT), &ohead);
+				ctx_load_meta(ctx, CB_SRC_PORT), 
+				ctx_load_meta(ctx, CB_ADDR_V4_2),
+				&ohead);
 
 	printk("jiang: set ipip %d", ret);
 
@@ -1911,7 +1898,12 @@ static __always_inline int nodeport_lb4(struct __ctx_buff *ctx,
 
 	svc = lb4_lookup_service(&key, false);
 	if (svc) {
-		const bool skip_l3_xlate = DSR_ENCAP_MODE == DSR_ENCAP_IPIP;
+		//const bool skip_l3_xlate = DSR_ENCAP_MODE == DSR_ENCAP_IPIP;
+		bool skip_l3_xlate = false;
+		//if (ip4->protocol == IPPROTO_IPIP)
+		//	skip_l3_xlate = true;
+		
+		printk("jiang: skip_xlate %d", skip_l3_xlate);
 
 		if (!lb4_src_range_ok(svc, ip4->saddr))
 			return DROP_NOT_IN_SRC_RANGE;
@@ -2027,6 +2019,7 @@ redo_local:
 			ctx_store_meta(ctx, CB_HINT,
 				       ((__u32)tuple.sport << 16) | tuple.dport);
 			ctx_store_meta(ctx, CB_ADDR_V4, tuple.daddr);
+			ctx_store_meta(ctx, CB_ADDR_V4_2, key.address);
 			ctx_store_meta(ctx, CB_SRC_PORT, key.dport);
 #elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
 			ctx_store_meta(ctx, CB_PORT, key.dport);
