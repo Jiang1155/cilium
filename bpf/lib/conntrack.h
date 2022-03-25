@@ -625,7 +625,6 @@ ct_extract_ports4(struct __ctx_buff *ctx, int off, int dir,
 				return DROP_CT_INVALID_HDR;
 			ihl = (ver_ihl & 0x0f);
 			off = off + (ihl << 2);
-			printk("jiang: ihl is %d", ihl);
 		}
 		/* fall through, assume tcp*/
 	case IPPROTO_TCP:
@@ -752,7 +751,6 @@ static __always_inline int ct_lookup4(const void *map,
 				return DROP_CT_INVALID_HDR;
 
 			off = off + (ihl << 2);
-			printk("jiang: in lookup, ihl is %d", ihl);
 
 			if (protocol == IPPROTO_UDP)
 				goto udp;

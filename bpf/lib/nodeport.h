@@ -1479,9 +1479,6 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 					    0, sum, 0) < 0)
 				return DROP_CSUM_L3;
 
-			//if (ct == CT_NEW) 
-			//	printk("got new connection");
-
 			if (iph_old.ihl == 0x7 ) {
 				*dsr = true;
 				if (snat_v4_create_dsr(ctx, address, dport) < 0) {
@@ -1656,7 +1653,6 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	ret = dsr_set_opt4(ctx, ip4,
 			   ctx_load_meta(ctx, CB_ADDR_V4_2),
 			   ctx_load_meta(ctx, CB_SRC_PORT), &ohead);
-	printk("jiang: set opt src ret %d", ret);
 	if (unlikely(ret)) {
 		if (dsr_fail_needs_reply(ret))
 			return dsr_reply_icmp4(ctx, ip4, ret, ohead);
@@ -1664,7 +1660,6 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	}
 	
 	if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
-		printk("jiang: validate data failed");
 		ret = DROP_INVALID;
 		goto drop_err;
 	}
@@ -1675,8 +1670,6 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 				ctx_load_meta(ctx, CB_SRC_PORT), 
 				ctx_load_meta(ctx, CB_ADDR_V4_2),
 				&ohead);
-
-	printk("jiang: set ipip %d", ret);
 
 #elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
 	ret = dsr_set_opt4(ctx, ip4,
@@ -1724,10 +1717,8 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 	}
 out_send:
 	cilium_capture_out(ctx);
-	printk("jiang: nodeport return ok");
 	return ctx_redirect(ctx, fib_params.l.ifindex, 0);
 drop_err:
-	printk("jiang: nodeport ERROR!");
 	return send_drop_notify_error(ctx, 0, ret, CTX_ACT_DROP, METRIC_EGRESS);
 }
 #endif /* ENABLE_DSR */
@@ -1898,13 +1889,8 @@ static __always_inline int nodeport_lb4(struct __ctx_buff *ctx,
 
 	svc = lb4_lookup_service(&key, false);
 	if (svc) {
-		//const bool skip_l3_xlate = DSR_ENCAP_MODE == DSR_ENCAP_IPIP;
 		bool skip_l3_xlate = false;
-		//if (ip4->protocol == IPPROTO_IPIP)
-		//	skip_l3_xlate = true;
 		
-		printk("jiang: skip_xlate %d", skip_l3_xlate);
-
 		if (!lb4_src_range_ok(svc, ip4->saddr))
 			return DROP_NOT_IN_SRC_RANGE;
 
