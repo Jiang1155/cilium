@@ -249,6 +249,8 @@ func (k *K8sWatcher) updateK8sPodV1(oldK8sPod, newK8sPod *slim_corev1.Pod) error
 		"old-hostIP":           oldK8sPod.Status.PodIP,
 	})
 
+	logger.Debug("Jiang: in update k8s pod")
+
 	// In Kubernetes Jobs, Pods can be left in Kubernetes until the Job
 	// is deleted. If the Job is never deleted, Cilium will never receive a Pod
 	// delete event, causing the IP to be left in the ipcache.

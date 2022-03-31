@@ -467,6 +467,21 @@ func (s *Service) GetDeepCopyServices() []*lb.SVC {
 	return svcs
 }
 
+// GetDeepCopyExtIPServices returns a deep-copy of external IP services.
+func (s *Service) GetDeepCopyExtIPServices() []*lb.SVC {
+	s.RLock()
+	defer s.RUnlock()
+
+	svcs := make([]*lb.SVC, 0, len(s.svcByHash))
+	for _, svc := range s.svcByHash {
+		if svc.svcType == lb.SVCTypeExternalIPs {
+			svcs = append(svcs, svc.deepCopyToLBSVC())
+		}
+	}
+
+	return svcs
+}
+
 // RestoreServices restores services from BPF maps.
 //
 // The method should be called once before establishing a connectivity

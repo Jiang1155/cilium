@@ -137,6 +137,7 @@ type policyRepository interface {
 type svcManager interface {
 	DeleteService(frontend loadbalancer.L3n4Addr) (bool, error)
 	UpsertService(*loadbalancer.SVC) (bool, loadbalancer.ID, error)
+	GetDeepCopyExtIPServices() []*loadbalancer.SVC
 }
 
 type redirectPolicyManager interface {
@@ -288,6 +289,10 @@ func (k *K8sWatcher) blockWaitGroupToSyncResources(
 
 func (k *K8sWatcher) GetAPIGroups() []string {
 	return k.k8sAPIGroups.GetGroups()
+}
+
+func (k *K8sWatcher) GetDeepCopyExtIPServices() []*loadbalancer.SVC {
+	return k.svcManager.GetDeepCopyExtIPServices()
 }
 
 // WaitForCRDsToRegister will wait for the Cilium Operator to register the CRDs

@@ -150,8 +150,9 @@ func (f *fakePolicyRepository) TranslateRules(translator policy.Translator) (*po
 }
 
 type fakeSvcManager struct {
-	OnDeleteService func(frontend loadbalancer.L3n4Addr) (bool, error)
-	OnUpsertService func(*loadbalancer.SVC) (bool, loadbalancer.ID, error)
+	OnDeleteService            func(frontend loadbalancer.L3n4Addr) (bool, error)
+	OnUpsertService            func(*loadbalancer.SVC) (bool, loadbalancer.ID, error)
+	OnGetDeepCopyExtIPServices func() []*loadbalancer.SVC
 }
 
 func (f *fakeSvcManager) DeleteService(frontend loadbalancer.L3n4Addr) (bool, error) {
@@ -164,6 +165,13 @@ func (f *fakeSvcManager) DeleteService(frontend loadbalancer.L3n4Addr) (bool, er
 func (f *fakeSvcManager) UpsertService(p *loadbalancer.SVC) (bool, loadbalancer.ID, error) {
 	if f.OnUpsertService != nil {
 		return f.OnUpsertService(p)
+	}
+	panic("OnUpsertService() was called and is not set!")
+}
+
+func (f *fakeSvcManager) GetDeepCopyExtIPServices() []*loadbalancer.SVC {
+	if f.OnGetDeepCopyExtIPServices != nil {
+		return f.OnGetDeepCopyExtIPServices()
 	}
 	panic("OnUpsertService() was called and is not set!")
 }
@@ -525,6 +533,9 @@ func (s *K8sWatcherSuite) Test_addK8sSVCs_ClusterIP(c *C) {
 			del1st[fe.Hash()] = struct{}{}
 			svcDeleteManagerCalls++
 			return true, nil
+		},
+		OnGetDeepCopyExtIPServices: func() []*loadbalancer.SVC {
+			return nil
 		},
 	}
 
