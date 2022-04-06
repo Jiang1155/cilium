@@ -317,6 +317,8 @@ func (d *Daemon) configExternalIP(ep *endpoint.Endpoint, exIP net.IP) error {
 		"Container name space": activeNetworkNamespaceHandle.String(),
 	}).Debug("Entered new container namespace")
 
+	_ = activeNetworkNamespaceHandle.Close()
+
 	// create an ipip tunnel interface inside the endpoint container
 	loopback, err := netlink.LinkByName("lo")
 	if err != nil {
