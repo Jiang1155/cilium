@@ -1256,12 +1256,14 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 					 __be32 backend_addr,
 					 __be32 l4_hint, 
 					 __be32 svc_port, 
-					 __be32 svc_addr, int *ohead)
+					 __be32 svc_addr, 
+					 bool externalip, int *ohead)
 {
 	__u16 tot_len = bpf_ntohs(ip4->tot_len) + sizeof(*ip4);
 	const int l3_off = ETH_HLEN;
 	__be32 sum;
 	__u8 ihlver;
+	__u32 opt_type = externalip ? DSR_IPV4_OPT_EXTIP_32 : DSR_IPV4_OPT_32;
 
 	struct iphds {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
@@ -1292,7 +1294,7 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 		.protocol	= ip4->protocol,
 		.saddr		= ip4->saddr,
 		.daddr		= ip4->daddr,
-		.opt0		= bpf_htonl(DSR_IPV4_OPT_32 |svc_port),
+		.opt0		= bpf_htonl(opt_type |svc_port),
 		.opt1 		= bpf_htonl(svc_addr),
 	}, tp_new = {
 		.ihl 		= 5,
@@ -1345,11 +1347,13 @@ static __always_inline int dsr_set_ipip4(struct __ctx_buff *ctx,
 #if DSR_ENCAP_MODE == DSR_ENCAP_NONE || DSR_ENCAP_MODE == DSR_ENCAP_IPIP
 static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 					struct iphdr *ip4, __be32 svc_addr,
-					__be32 svc_port, int *ohead)
+					__be32 svc_port, bool externalip,
+					int *ohead)
 {
 	__u32 iph_old, iph_new, opt[2];
 	__u16 tot_len = bpf_ntohs(ip4->tot_len) + sizeof(opt);
 	__be32 sum;
+	__u32 opt_type = externalip ? DSR_IPV4_OPT_EXTIP_32 : DSR_IPV4_OPT_32;
 
 	if (ip4->protocol == IPPROTO_TCP) {
 		union tcp_flags tcp_flags = { .value = 0 };
@@ -1363,8 +1367,10 @@ static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 		 * same connection a remote node will use a NAT entry to
 		 * reverse xlate a reply.
 		 */
+#if DSR_ENCAP_MODE == DSR_ENCAP_NONE
 		if (!(tcp_flags.value & (TCP_FLAG_SYN)))
 			return 0;
+#endif
 	}
 
 	if (dsr_is_too_big(ctx, tot_len)) {
@@ -1377,7 +1383,7 @@ static __always_inline int dsr_set_opt4(struct __ctx_buff *ctx,
 	ip4->tot_len = bpf_htons(tot_len);
 	iph_new = *(__u32 *)ip4;
 
-	opt[0] = bpf_htonl(DSR_IPV4_OPT_32 | svc_port);
+	opt[0] = bpf_htonl(opt_type | svc_port);
 	opt[1] = bpf_htonl(svc_addr);
 
 	sum = csum_diff(&iph_old, 4, &iph_new, 4, 0);
@@ -1415,16 +1421,22 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 		int l4_off __maybe_unused;
 		struct iphdr iph_old;
 		__be32 address __maybe_unused = 0;
+		bool external_ip = false;
+
+		printk("jiang, begin handle dsr");
 
 		if (!revalidate_data(ctx, &data, &data_end, &ip4))
 			return DROP_INVALID;
+		printk("jiang, after validate");
 		*dsr = false;
 		podip = ip4->daddr;
 
 		if (ip4->protocol == IPPROTO_IPIP) {
+			printk("jiang, proto is ipip");
 			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
 					&iph_inner, sizeof(iph_inner)) < 0)
 				return DROP_INVALID;
+			printk("jiang, after load hdr");
 			iph_old = iph_inner;
 
 			/* Check whether IPv4 header contains a 64-bit option (IPv4 header
@@ -1434,15 +1446,20 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 				__u32 opt1 = 0, opt2 = 0;
 				__u32 noneopt = 0, noneopt2 = 0;
 				__u16 tot_len = bpf_ntohs(iph_inner.tot_len) - sizeof(opt1)*2;
+				printk("jiang, ihl is 7");
 
 				if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr)*2,
 						&opt1, sizeof(opt1)) < 0)
 					return DROP_INVALID;
+				printk("jiang, after load opt1");
 
 				sum = csum_diff(&opt1, 4, &noneopt, 4, 0);
 
 				opt1 = bpf_ntohl(opt1);
-				if ((opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_32) {
+				if ((opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_32
+				|| (opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_EXTIP_32) {
+					printk("jiang, opt is cilium");
+
 					if (ctx_load_bytes(ctx, ETH_HLEN +
 							sizeof(struct iphdr)*2 +
 							sizeof(opt1),
@@ -1453,6 +1470,16 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 					opt2 = bpf_ntohl(opt2);
 					dport = opt1 & DSR_IPV4_DPORT_MASK;
 					address = opt2;
+
+					podip = iph_inner.daddr;
+					printk("jiang: got our ipip pkt");
+					/* replace dip with vip. Need to add #if checks */
+					if ((opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_EXTIP_32) {
+						external_ip = true;
+						iph_inner.daddr = address;
+						printk("jiang: new daddr is %x", address);
+						sum = csum_diff(&podip, 4, &address, 4, sum);
+					}
 				}
 
 				iph_inner.ihl = 0x5;
@@ -1479,7 +1506,9 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 					    0, sum, 0) < 0)
 				return DROP_CSUM_L3;
 
-			if (iph_old.ihl == 0x7 ) {
+			//need to add #if check to for pod ip vs vip setting.
+			//if (iph_old.ihl == 0x7 && !external_ip) {
+			if (iph_old.ihl == 0x7) {
 				*dsr = true;
 				if (snat_v4_create_dsr(ctx, address, dport) < 0) {
 					return DROP_INVALID;
@@ -1652,7 +1681,8 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 #if DSR_ENCAP_MODE == DSR_ENCAP_IPIP
 	ret = dsr_set_opt4(ctx, ip4,
 			   ctx_load_meta(ctx, CB_ADDR_V4_2),
-			   ctx_load_meta(ctx, CB_SRC_PORT), &ohead);
+			   ctx_load_meta(ctx, CB_SRC_PORT), 
+			   ctx_load_meta(ctx, CB_SVC_TYPE), &ohead);
 	if (unlikely(ret)) {
 		if (dsr_fail_needs_reply(ret))
 			return dsr_reply_icmp4(ctx, ip4, ret, ohead);
@@ -1669,12 +1699,14 @@ int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 				ctx_load_meta(ctx, CB_HINT),
 				ctx_load_meta(ctx, CB_SRC_PORT), 
 				ctx_load_meta(ctx, CB_ADDR_V4_2),
+				ctx_load_meta(ctx, CB_SVC_TYPE),
 				&ohead);
 
 #elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
 	ret = dsr_set_opt4(ctx, ip4,
 			   ctx_load_meta(ctx, CB_ADDR_V4),
-			   ctx_load_meta(ctx, CB_PORT), &ohead);
+			   ctx_load_meta(ctx, CB_PORT), 
+			   false, &ohead);
 #else
 # error "Invalid load balancer DSR encapsulation mode!"
 #endif
@@ -1864,6 +1896,7 @@ static __always_inline int nodeport_lb4(struct __ctx_buff *ctx,
 	struct ct_state ct_state_new = {};
 	union macaddr smac, *mac;
 	bool backend_local;
+	bool externalip_svc;
 	__u32 monitor = 0;
 
 	cilium_capture_in(ctx);
@@ -1923,6 +1956,7 @@ skip_service_lookup:
 		ep_tail_call(ctx, CILIUM_CALL_IPV4_NODEPORT_NAT);
 		return DROP_MISSED_TAIL_CALL;
 	}
+	externalip_svc = lb4_svc_is_external_ip(svc);
 
 	backend_local = __lookup_ip4_endpoint(tuple.daddr);
 	if (!backend_local && lb4_svc_is_hostport(svc))
@@ -2007,6 +2041,7 @@ redo_local:
 			ctx_store_meta(ctx, CB_ADDR_V4, tuple.daddr);
 			ctx_store_meta(ctx, CB_ADDR_V4_2, key.address);
 			ctx_store_meta(ctx, CB_SRC_PORT, key.dport);
+			ctx_store_meta(ctx, CB_SVC_TYPE, externalip_svc);
 #elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
 			ctx_store_meta(ctx, CB_PORT, key.dport);
 			ctx_store_meta(ctx, CB_ADDR_V4, key.address);
