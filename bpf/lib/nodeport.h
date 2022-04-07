@@ -1423,20 +1423,16 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 		__be32 address __maybe_unused = 0;
 		bool external_ip = false;
 
-		printk("jiang, begin handle dsr");
-
 		if (!revalidate_data(ctx, &data, &data_end, &ip4))
 			return DROP_INVALID;
-		printk("jiang, after validate");
+
 		*dsr = false;
 		podip = ip4->daddr;
 
 		if (ip4->protocol == IPPROTO_IPIP) {
-			printk("jiang, proto is ipip");
 			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
 					&iph_inner, sizeof(iph_inner)) < 0)
 				return DROP_INVALID;
-			printk("jiang, after load hdr");
 			iph_old = iph_inner;
 
 			/* Check whether IPv4 header contains a 64-bit option (IPv4 header
@@ -1446,20 +1442,16 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 				__u32 opt1 = 0, opt2 = 0;
 				__u32 noneopt = 0, noneopt2 = 0;
 				__u16 tot_len = bpf_ntohs(iph_inner.tot_len) - sizeof(opt1)*2;
-				printk("jiang, ihl is 7");
 
 				if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr)*2,
 						&opt1, sizeof(opt1)) < 0)
 					return DROP_INVALID;
-				printk("jiang, after load opt1");
 
 				sum = csum_diff(&opt1, 4, &noneopt, 4, 0);
 
 				opt1 = bpf_ntohl(opt1);
 				if ((opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_32
 				|| (opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_EXTIP_32) {
-					printk("jiang, opt is cilium");
-
 					if (ctx_load_bytes(ctx, ETH_HLEN +
 							sizeof(struct iphdr)*2 +
 							sizeof(opt1),
@@ -1472,12 +1464,10 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 					address = opt2;
 
 					podip = iph_inner.daddr;
-					printk("jiang: got our ipip pkt");
 					/* replace dip with vip. Need to add #if checks */
 					if ((opt1 & DSR_IPV4_OPT_MASK) == DSR_IPV4_OPT_EXTIP_32) {
 						external_ip = true;
 						iph_inner.daddr = address;
-						printk("jiang: new daddr is %x", address);
 						sum = csum_diff(&podip, 4, &address, 4, sum);
 					}
 				}

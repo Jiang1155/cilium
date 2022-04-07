@@ -549,10 +549,11 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx,
 
 	tuple.nexthdr = ip4->protocol;
 
+	/* jiang, disable sip verfication
 	if (unlikely(!is_valid_lxc_src_ipv4(ip4))) {
-		printk("jiang, got invliad sip, but dont fail");
-		//return DROP_INVALID_SIP;
+		return DROP_INVALID_SIP;
 	}
+	*/
 		
 
 	tuple.daddr = ip4->daddr;
@@ -717,7 +718,6 @@ ct_recreate4:
 # ifdef ENABLE_DSR
 		if (ct_state.dsr) {
 			ret = xlate_dsr_v4(ctx, &tuple, l4_off, has_l4_header);
-			printk("jiang: xlate_dsr_v4 return %d", ret);
 			if (ret != 0)
 				return ret;
 		}
