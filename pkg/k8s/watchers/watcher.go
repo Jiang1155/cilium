@@ -761,6 +761,8 @@ func (k *K8sWatcher) addK8sSVCs(svcID k8s.ServiceID, oldSvc, svc *k8s.Service, e
 		logfields.K8sNamespace: svcID.Namespace,
 	})
 
+	scopedLog.Debug("Jiang, in addk8svc")
+
 	svcs := datapathSVCs(svc, endpoints)
 	svcMap := hashSVCMap(svcs)
 

@@ -257,12 +257,6 @@ func attemptNamespaceResetAfterError(hostNSHandle netns.NsHandle) {
 }
 
 func (d *Daemon) configExternalIP(ep *endpoint.Endpoint, exIP net.IP) error {
-	log.WithFields(logrus.Fields{
-		"ep name":      ep.GetK8sPodName(),
-		"container id": ep.GetContainerID(),
-		"frontend ip":  exIP,
-	}).Debug("Jiang, found ep with srv in config ex IP")
-
 	//maybe need a runtime os thread lock?
 	origNameSpace, err := netns.Get()
 	if err != nil {
@@ -289,7 +283,7 @@ func (d *Daemon) configExternalIP(ep *endpoint.Endpoint, exIP net.IP) error {
 
 	log.WithFields(logrus.Fields{
 		"pod pid": pid,
-	}).Debug("Jiang, configing vip")
+	}).Debug("Configing vip")
 
 	endpointNamespaceHandle, err := netns.GetFromPid(pid)
 	if err != nil {
@@ -335,7 +329,7 @@ func (d *Daemon) configExternalIP(ep *endpoint.Endpoint, exIP net.IP) error {
 		"IP.ip":   ip.IP.String(),
 		"IP.mask": ip.Mask.String(),
 		"addr":    addr.String(),
-	}).Debug("Jiang trying to assign exteranl IP to pod")
+	}).Debug("Trying to assign exteranl IP to pod")
 
 	err = netlink.AddrAdd(loopback, addr)
 
@@ -432,7 +426,7 @@ func (d *Daemon) regenerateRestoredEndpoints(state *endpointRestoreState) (resto
 						"ep name":     ep.GetK8sPodName(),
 						"backend ip":  backend.IP,
 						"frontend ip": svc.Frontend.IP,
-					}).Debug("Jiang, found ep with srv!!!")
+					}).Debug("Found ep with srv!!!")
 					d.configExternalIP(ep, svc.Frontend.IP)
 				}
 			}
