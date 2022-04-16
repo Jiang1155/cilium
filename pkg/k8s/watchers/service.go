@@ -74,7 +74,7 @@ func (k *K8sWatcher) addK8sServiceV1(svc *slim_corev1.Service, swg *lock.Stoppab
 	logger := log.WithFields(logrus.Fields{
 		"service": "get srv",
 	})
-	logger.Debug("Jiang, in addk8svc")
+	logger.Debug("Jiang, in addk8svc 2")
 
 	svcID := k.K8sSvcCache.UpdateService(svc, swg)
 	if option.Config.EnableLocalRedirectPolicy {

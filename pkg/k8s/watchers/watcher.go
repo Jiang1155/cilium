@@ -761,14 +761,26 @@ func (k *K8sWatcher) addK8sSVCs(svcID k8s.ServiceID, oldSvc, svc *k8s.Service, e
 		logfields.K8sNamespace: svcID.Namespace,
 	})
 
-	scopedLog.Debug("Jiang, in addk8svc")
+	scopedLog.Debug("Jiang, in addk8svc 1")
 
 	svcs := datapathSVCs(svc, endpoints)
 	svcMap := hashSVCMap(svcs)
 
+	eps := k.endpointManager.GetEndpoints()
+	log.WithField("eps len", len(eps)).Debug("Jiang, in add svcxx")
+
+	for _, ep := range eps {
+		log.WithFields(logrus.Fields{
+			"ep name": ep.GetK8sPodName(),
+			"ep ip":   ep.IPv4,
+		}).Debug("Jiang in add svc, checking ep")
+	}
+
 	if oldSvc != nil {
 		// If we have oldService then we need to detect which frontends
 		// are no longer in the updated service and delete them in the datapath.
+
+		log.Debug("Jiang, oldSvc is not nil")
 
 		oldSVCs := datapathSVCs(oldSvc, endpoints)
 		oldSVCMap := hashSVCMap(oldSVCs)
@@ -800,8 +812,28 @@ func (k *K8sWatcher) addK8sSVCs(svcID k8s.ServiceID, oldSvc, svc *k8s.Service, e
 			Name:                      svcID.Name,
 			Namespace:                 svcID.Namespace,
 		}
+		scopedLog = log.WithFields(logrus.Fields{
+			"backends":      dpSvc.Backends,
+			"frontend":      dpSvc.Frontend,
+			"type":          dpSvc.Type,
+			"endpoint name": endpoints.String(),
+		})
+		scopedLog.Debug("Jiang, before upster service")
+
 		if _, _, err := k.svcManager.UpsertService(p); err != nil {
 			scopedLog.WithError(err).Error("Error while inserting service in LB map")
+		}
+
+		eps := k.endpointManager.GetEndpoints()
+		log.WithField("eps len", len(eps)).Debug("Jiang, in add svcxx 2")
+
+		if p.Type == loadbalancer.SVCTypeExternalIPs {
+			for _, ep := range eps {
+				log.WithFields(logrus.Fields{
+					"ep name": ep.GetK8sPodName(),
+					"ep ip":   ep.IPv4,
+				}).Debug("Jiang in add svc, checking ep")
+			}
 		}
 	}
 	return nil
