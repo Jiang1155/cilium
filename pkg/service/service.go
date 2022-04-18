@@ -308,7 +308,7 @@ func (s *Service) InitMaps(ipv6, ipv4, sockMaps, restore bool) error {
 // UpsertService inserts or updates the given service.
 //
 // The first return value is true if the service hasn't existed before.
-func (s *Service) UpsertService(params *lb.SVC) (bool, lb.ID, error) {
+func (s *Service) UpsertService(params *lb.SVC) (bool, lb.ID, []lb.Backend, error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -338,18 +338,18 @@ func (s *Service) UpsertService(params *lb.SVC) (bool, lb.ID, error) {
 	ipv6Svc := params.Frontend.IsIPv6()
 	if ipv6Svc && !option.Config.EnableIPv6 {
 		err := fmt.Errorf("Unable to upsert service %s as IPv6 is disabled", params.Frontend.L3n4Addr.String())
-		return false, lb.ID(0), err
+		return false, lb.ID(0), []lb.Backend{}, err
 	}
 	if !ipv6Svc && !option.Config.EnableIPv4 {
 		err := fmt.Errorf("Unable to upsert service %s as IPv4 is disabled", params.Frontend.L3n4Addr.String())
-		return false, lb.ID(0), err
+		return false, lb.ID(0), []lb.Backend{}, err
 	}
 
 	// If needed, create svcInfo and allocate service ID
 	svc, new, prevSessionAffinity, prevLoadBalancerSourceRanges, err :=
 		s.createSVCInfoIfNotExist(params)
 	if err != nil {
-		return false, lb.ID(0), err
+		return false, lb.ID(0), []lb.Backend{}, err
 	}
 	// TODO(brb) defer ServiceID release after we have a lbmap "rollback"
 	scopedLog = scopedLog.WithField(logfields.ServiceID, svc.frontend.ID)
@@ -377,7 +377,7 @@ func (s *Service) UpsertService(params *lb.SVC) (bool, lb.ID, error) {
 	newBackends, obsoleteBackendIDs, obsoleteSVCBackendIDs, err :=
 		s.updateBackendsCacheLocked(svc, backendsCopy)
 	if err != nil {
-		return false, lb.ID(0), err
+		return false, lb.ID(0), []lb.Backend{}, err
 	}
 
 	// Update lbmaps (BPF service maps)
@@ -385,7 +385,7 @@ func (s *Service) UpsertService(params *lb.SVC) (bool, lb.ID, error) {
 		newBackends, obsoleteBackendIDs, prevSessionAffinity, prevLoadBalancerSourceRanges,
 		obsoleteSVCBackendIDs, scopedLog); err != nil {
 
-		return false, lb.ID(0), err
+		return false, lb.ID(0), []lb.Backend{}, err
 	}
 
 	// Only add a HealthCheckNodePort server if this is a service which may
@@ -411,7 +411,7 @@ func (s *Service) UpsertService(params *lb.SVC) (bool, lb.ID, error) {
 
 	s.notifyMonitorServiceUpsert(svc.frontend, svc.backends,
 		svc.svcType, svc.svcTrafficPolicy, svc.svcName, svc.svcNamespace)
-	return new, lb.ID(svc.frontend.ID), nil
+	return new, lb.ID(svc.frontend.ID), newBackends, nil
 }
 
 // DeleteServiceByID removes a service identified by the given ID.

@@ -136,7 +136,8 @@ type policyRepository interface {
 
 type svcManager interface {
 	DeleteService(frontend loadbalancer.L3n4Addr) (bool, error)
-	UpsertService(*loadbalancer.SVC) (bool, loadbalancer.ID, error)
+	UpsertService(*loadbalancer.SVC) (bool, loadbalancer.ID,
+		[]loadbalancer.Backend, error)
 	GetDeepCopyExtIPServices() []*loadbalancer.SVC
 }
 
@@ -820,7 +821,7 @@ func (k *K8sWatcher) addK8sSVCs(svcID k8s.ServiceID, oldSvc, svc *k8s.Service, e
 		})
 		scopedLog.Debug("Jiang, before upster service")
 
-		if _, _, err := k.svcManager.UpsertService(p); err != nil {
+		if _, _, _, err := k.svcManager.UpsertService(p); err != nil {
 			scopedLog.WithError(err).Error("Error while inserting service in LB map")
 		}
 

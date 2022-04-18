@@ -789,7 +789,7 @@ func (k *K8sWatcher) upsertHostPortMapping(oldPod, newPod *slim_corev1.Pod, oldP
 			Namespace:           newPod.ObjectMeta.Namespace,
 		}
 
-		if _, _, err := k.svcManager.UpsertService(p); err != nil {
+		if _, _, _, err := k.svcManager.UpsertService(p); err != nil {
 			logger.WithError(err).Error("Error while inserting service in LB map")
 			return err
 		}
