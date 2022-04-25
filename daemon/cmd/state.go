@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	sysruntime "runtime"
 	"sync"
 	"syscall"
 
@@ -257,13 +258,19 @@ func attemptNamespaceResetAfterError(hostNSHandle netns.NsHandle) {
 }
 
 func (d *Daemon) configExternalIP(ep *endpoint.Endpoint, exIP net.IP) error {
-	//maybe need a runtime os thread lock?
+	sysruntime.LockOSThread()
+	defer sysruntime.UnlockOSThread()
+
 	origNameSpace, err := netns.Get()
 	if err != nil {
 		log.WithError(err).Warning("Unable to get current ns 1")
 		return err
 	}
 	defer origNameSpace.Close()
+
+	log.WithFields(logrus.Fields{
+		"orginal namespace": origNameSpace.String(),
+	}).Debug("Original network namespace")
 
 	dockerClient, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
@@ -311,7 +318,7 @@ func (d *Daemon) configExternalIP(ep *endpoint.Endpoint, exIP net.IP) error {
 		"Container name space": activeNetworkNamespaceHandle.String(),
 	}).Debug("Entered new container namespace")
 
-	_ = activeNetworkNamespaceHandle.Close()
+	//_ = activeNetworkNamespaceHandle.Close()
 
 	// create an ipip tunnel interface inside the endpoint container
 	loopback, err := netlink.LinkByName("lo")

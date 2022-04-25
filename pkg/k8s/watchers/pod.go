@@ -11,7 +11,6 @@ import (
 	"net"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/cilium/cilium/pkg/annotation"
@@ -39,9 +38,6 @@ import (
 	"github.com/cilium/cilium/pkg/policy"
 	"github.com/cilium/cilium/pkg/source"
 	"github.com/cilium/cilium/pkg/u8proto"
-	"github.com/docker/docker/client"
-	"github.com/vishvananda/netlink"
-	"github.com/vishvananda/netns"
 
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
@@ -237,134 +233,6 @@ func (k *K8sWatcher) addK8sPodV1(pod *slim_corev1.Pod) error {
 	return nil
 }
 
-func attemptNamespaceResetAfterError(hostNSHandle netns.NsHandle) {
-	err := netns.Set(hostNSHandle)
-	if err != nil {
-		log.WithError(err).Warn("failed to set hostNetworkNamespace while resetting namespace after a previous error")
-	}
-
-	activeNetworkNamespaceHandle, err := netns.Get()
-	if err != nil {
-		log.WithError(err).Warn("failed to confirm activeNetworkNamespace while resetting namespace after a previous error")
-		return
-	}
-	log.WithFields(logrus.Fields{
-		"current namespace": activeNetworkNamespaceHandle.String(),
-	}).Debug("Current network namespace after revert namespace to host network namespace")
-
-	_ = activeNetworkNamespaceHandle.Close()
-}
-
-func (k *K8sWatcher) configExternalIP(ep *endpoint.Endpoint, exIP net.IP) error {
-	//maybe need a runtime os thread lock?
-	origNameSpace, err := netns.Get()
-	if err != nil {
-		log.WithError(err).Warning("Unable to get current ns 1")
-		return err
-	}
-	defer origNameSpace.Close()
-
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		log.WithError(err).Warning("Unable to create docker client")
-		return err
-	}
-	defer dockerClient.Close()
-
-	containerSpec, err := dockerClient.ContainerInspect(context.Background(),
-		ep.GetContainerID())
-	if err != nil {
-		log.WithError(err).Warning("Unable to inspect docker")
-		return err
-	}
-
-	pid := containerSpec.State.Pid
-
-	log.WithFields(logrus.Fields{
-		"pod pid": pid,
-	}).Debug("Configing vip")
-
-	endpointNamespaceHandle, err := netns.GetFromPid(pid)
-	if err != nil {
-		log.WithError(err).Warning("Unable to get pod namespace")
-		return err
-	}
-	defer endpointNamespaceHandle.Close()
-
-	// LINUX NAMESPACE SHIFT - It is important to note that from here
-	// until the end of the function (or until an error)
-	// all subsequent commands are executed from within the container's
-	// network namespace and NOT the host's namespace.
-	err = netns.Set(endpointNamespaceHandle)
-	if err != nil {
-		log.WithError(err).Warning("Unable to enter pod namespace")
-		return err
-	}
-
-	activeNetworkNamespaceHandle, err := netns.Get()
-	if err != nil {
-		log.WithError(err).Warning("Unable to get new pod namespace")
-		return err
-	}
-	log.WithFields(logrus.Fields{
-		"Container name space": activeNetworkNamespaceHandle.String(),
-	}).Debug("Entered new container namespace")
-
-	_ = activeNetworkNamespaceHandle.Close()
-
-	// create an ipip tunnel interface inside the endpoint container
-	loopback, err := netlink.LinkByName("lo")
-	if err != nil {
-		attemptNamespaceResetAfterError(origNameSpace)
-		return err
-	}
-
-	// assign external IP to loopback interface
-	//ipbyteslice, err := exIP.MarshalText()
-	ip := net.IPNet{IP: exIP, Mask: net.IPv4Mask(255, 255, 255, 255)}
-	addr := &netlink.Addr{IPNet: &ip, Scope: syscall.RT_SCOPE_LINK}
-
-	log.WithFields(logrus.Fields{
-		"IP.ip":   ip.IP.String(),
-		"IP.mask": ip.Mask.String(),
-		"addr":    addr.String(),
-	}).Debug("Trying to assign exteranl IP to pod")
-
-	err = netlink.AddrAdd(loopback, addr)
-
-	if err != nil && err.Error() != "file exists" {
-		attemptNamespaceResetAfterError(origNameSpace)
-		log.WithError(err).Warn("failed to add ip address")
-		return err
-	}
-
-	_ = activeNetworkNamespaceHandle.Close()
-
-	log.WithFields(logrus.Fields{
-		"exteranl IP": exIP,
-		"Pod name":    ep.GetK8sPodName(),
-	}).Debug("Successfully assigned exteranl IP to pod")
-
-	//set back to orignal namespace.
-	err = netns.Set(origNameSpace)
-	if err != nil {
-		log.Warn("failed to set back to host namespace")
-		return err
-	}
-	activeNetworkNamespaceHandle, err = netns.Get()
-	if err != nil {
-		log.Debug("failed to get back host namespace")
-		return err
-	}
-	log.WithFields(logrus.Fields{
-		"current namespace": activeNetworkNamespaceHandle.String(),
-	}).Debug("Current network namespace after revert namespace to host network namespace")
-
-	_ = activeNetworkNamespaceHandle.Close()
-
-	return nil
-}
-
 func (k *K8sWatcher) updateK8sPodV1(oldK8sPod, newK8sPod *slim_corev1.Pod) error {
 	if oldK8sPod == nil || newK8sPod == nil {
 		return nil
@@ -473,7 +341,6 @@ func (k *K8sWatcher) updateK8sPodV1(oldK8sPod, newK8sPod *slim_corev1.Pod) error
 					"backend ip":  backend.IP,
 					"frontend ip": svc.Frontend.IP,
 				}).Debug("Jiang, Add pod, Found ep with srv!!!")
-				k.configExternalIP(podEP, svc.Frontend.IP)
 			}
 		}
 
