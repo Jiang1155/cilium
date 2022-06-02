@@ -731,6 +731,19 @@ Secondary Interface %s :: IPv4: (%s, %s), IPv6: (%s, %s)`,
 			testNodePortExternal(kubectl, ni, false, true, true)
 		})
 
+		It("Tests with XDP, direct routing, DSR in IPIP and Random", func() {
+			DeployCiliumOptionsAndDNS(kubectl, ciliumFilename, map[string]string{
+				"loadBalancer.acceleration": "testing-only",
+				"loadBalancer.mode":         "dsr",
+				"loadBalancer.algorithm":    "random",
+				"tunnel":                    "disabled",
+				"autoDirectNodeRoutes":      "true",
+				"loadBalancer.dsrDispatch":  "ipip",
+				"devices":                   fmt.Sprintf(`'{%s}'`, ni.PrivateIface),
+			})
+			testNodePortExternal(kubectl, ni, false, true, true)
+		})
+
 		It("Tests with XDP, direct routing, DSR and Maglev", func() {
 			DeployCiliumOptionsAndDNS(kubectl, ciliumFilename, map[string]string{
 				"loadBalancer.acceleration": "testing-only",
