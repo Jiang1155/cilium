@@ -51,8 +51,14 @@ const (
 	BMP_PEER_FLAG_IPV6        = 1 << 7
 	BMP_PEER_FLAG_POST_POLICY = 1 << 6
 	BMP_PEER_FLAG_TWO_AS      = 1 << 5
-	BMP_PEER_FLAG_FILTERED    = 1 << 6
+	BMP_PEER_FLAG_ADJ_RIB_TYP = 1 << 4
 )
+
+func makeIP(data []byte) net.IP {
+	ip := make(net.IP, len(data))
+	copy(ip, data)
+	return ip
+}
 
 func (h *BMPHeader) DecodeFromBytes(data []byte) error {
 	h.Version = data[0]
@@ -108,14 +114,18 @@ func (h *BMPPeerHeader) IsPostPolicy() bool {
 	}
 }
 
+func (h *BMPPeerHeader) IsAdjRIBOut() bool {
+	return h.Flags&BMP_PEER_FLAG_ADJ_RIB_TYP != 0
+}
+
 func (h *BMPPeerHeader) DecodeFromBytes(data []byte) error {
 	h.PeerType = data[0]
 	h.Flags = data[1]
 	h.PeerDistinguisher = binary.BigEndian.Uint64(data[2:10])
 	if h.Flags&BMP_PEER_FLAG_IPV6 != 0 {
-		h.PeerAddress = net.IP(data[10:26]).To16()
+		h.PeerAddress = makeIP(data[10:26]).To16()
 	} else {
-		h.PeerAddress = net.IP(data[22:26]).To4()
+		h.PeerAddress = makeIP(data[22:26]).To4()
 	}
 	h.PeerAS = binary.BigEndian.Uint32(data[26:30])
 	h.PeerBGPID = data[30:34]
@@ -163,19 +173,19 @@ func NewBMPRouteMonitoring(p BMPPeerHeader, update *bgp.BGPMessage) *BMPMessage 
 	}
 }
 
-func (body *BMPRouteMonitoring) ParseBody(msg *BMPMessage, data []byte) error {
+func (body *BMPRouteMonitoring) ParseBody(msg *BMPMessage, data []byte, options ...*bgp.MarshallingOption) error {
 	var err error
 
-	body.BGPUpdate, err = bgp.ParseBGPMessage(data)
+	body.BGPUpdate, err = bgp.ParseBGPMessage(data, options...)
 
 	return err
 }
 
-func (body *BMPRouteMonitoring) Serialize() ([]byte, error) {
+func (body *BMPRouteMonitoring) Serialize(options ...*bgp.MarshallingOption) ([]byte, error) {
 	if body.BGPUpdatePayload != nil {
 		return body.BGPUpdatePayload, nil
 	}
-	return body.BGPUpdate.Serialize()
+	return body.BGPUpdate.Serialize(options...)
 }
 
 const (
@@ -193,6 +203,10 @@ const (
 	BMP_STAT_TYPE_WITHDRAW_UPDATE
 	BMP_STAT_TYPE_WITHDRAW_PREFIX
 	BMP_STAT_TYPE_DUPLICATE_UPDATE
+	BMP_STAT_TYPE_ADJ_RIB_OUT_PRE_POLICY
+	BMP_STAT_TYPE_ADJ_RIB_OUT_POST_POLICY
+	BMP_STAT_TYPE_PER_AFI_SAFI_ADJ_RIB_OUT_PRE_POLICY
+	BMP_STAT_TYPE_PER_AFI_SAFI_ADJ_RIB_OUT_POST_POLICY
 )
 
 type BMPStatsTLVInterface interface {
@@ -325,7 +339,7 @@ func NewBMPStatisticsReport(p BMPPeerHeader, stats []BMPStatsTLVInterface) *BMPM
 	}
 }
 
-func (body *BMPStatisticsReport) ParseBody(msg *BMPMessage, data []byte) error {
+func (body *BMPStatisticsReport) ParseBody(msg *BMPMessage, data []byte, options ...*bgp.MarshallingOption) error {
 	body.Count = binary.BigEndian.Uint32(data[0:4])
 	data = data[4:]
 	for len(data) >= 4 {
@@ -339,9 +353,11 @@ func (body *BMPStatisticsReport) ParseBody(msg *BMPMessage, data []byte) error {
 		}
 		var s BMPStatsTLVInterface
 		switch tl.Type {
-		case BMP_STAT_TYPE_ADJ_RIB_IN, BMP_STAT_TYPE_LOC_RIB:
+		case BMP_STAT_TYPE_ADJ_RIB_IN, BMP_STAT_TYPE_LOC_RIB, BMP_STAT_TYPE_ADJ_RIB_OUT_PRE_POLICY,
+			BMP_STAT_TYPE_ADJ_RIB_OUT_POST_POLICY:
 			s = &BMPStatsTLV64{BMPStatsTLV: tl}
-		case BMP_STAT_TYPE_PER_AFI_SAFI_ADJ_RIB_IN, BMP_STAT_TYPE_PER_AFI_SAFI_LOC_RIB:
+		case BMP_STAT_TYPE_PER_AFI_SAFI_ADJ_RIB_IN, BMP_STAT_TYPE_PER_AFI_SAFI_LOC_RIB,
+			BMP_STAT_TYPE_PER_AFI_SAFI_ADJ_RIB_OUT_PRE_POLICY, BMP_STAT_TYPE_PER_AFI_SAFI_ADJ_RIB_OUT_POST_POLICY:
 			s = &BMPStatsTLVPerAfiSafi64{BMPStatsTLV: tl}
 		case BMP_STAT_TYPE_REJECTED, BMP_STAT_TYPE_DUPLICATE_PREFIX,
 			BMP_STAT_TYPE_DUPLICATE_WITHDRAW, BMP_STAT_TYPE_INV_UPDATE_DUE_TO_CLUSTER_LIST_LOOP,
@@ -368,7 +384,7 @@ func (body *BMPStatisticsReport) ParseBody(msg *BMPMessage, data []byte) error {
 	return nil
 }
 
-func (body *BMPStatisticsReport) Serialize() ([]byte, error) {
+func (body *BMPStatisticsReport) Serialize(options ...*bgp.MarshallingOption) ([]byte, error) {
 	buf := make([]byte, 4)
 	body.Count = uint32(len(body.Stats))
 	binary.BigEndian.PutUint32(buf[0:4], body.Count)
@@ -418,11 +434,11 @@ func NewBMPPeerDownNotification(p BMPPeerHeader, reason uint8, notification *bgp
 	}
 }
 
-func (body *BMPPeerDownNotification) ParseBody(msg *BMPMessage, data []byte) error {
+func (body *BMPPeerDownNotification) ParseBody(msg *BMPMessage, data []byte, options ...*bgp.MarshallingOption) error {
 	body.Reason = data[0]
 	data = data[1:]
 	if body.Reason == BMP_PEER_DOWN_REASON_LOCAL_BGP_NOTIFICATION || body.Reason == BMP_PEER_DOWN_REASON_REMOTE_BGP_NOTIFICATION {
-		notification, err := bgp.ParseBGPMessage(data)
+		notification, err := bgp.ParseBGPMessage(data, options...)
 		if err != nil {
 			return err
 		}
@@ -433,13 +449,13 @@ func (body *BMPPeerDownNotification) ParseBody(msg *BMPMessage, data []byte) err
 	return nil
 }
 
-func (body *BMPPeerDownNotification) Serialize() ([]byte, error) {
+func (body *BMPPeerDownNotification) Serialize(options ...*bgp.MarshallingOption) ([]byte, error) {
 	buf := make([]byte, 1)
 	buf[0] = body.Reason
 	switch body.Reason {
 	case BMP_PEER_DOWN_REASON_LOCAL_BGP_NOTIFICATION, BMP_PEER_DOWN_REASON_REMOTE_BGP_NOTIFICATION:
 		if body.BGPNotification != nil {
-			b, err := body.BGPNotification.Serialize()
+			b, err := body.BGPNotification.Serialize(options...)
 			if err != nil {
 				return nil, err
 			} else {
@@ -485,31 +501,31 @@ func NewBMPPeerUpNotification(p BMPPeerHeader, lAddr string, lPort, rPort uint16
 	}
 }
 
-func (body *BMPPeerUpNotification) ParseBody(msg *BMPMessage, data []byte) error {
+func (body *BMPPeerUpNotification) ParseBody(msg *BMPMessage, data []byte, options ...*bgp.MarshallingOption) error {
 	if msg.PeerHeader.Flags&BMP_PEER_FLAG_IPV6 != 0 {
-		body.LocalAddress = net.IP(data[:16]).To16()
+		body.LocalAddress = makeIP(data[:16]).To16()
 	} else {
-		body.LocalAddress = net.IP(data[12:16]).To4()
+		body.LocalAddress = makeIP(data[12:16]).To4()
 	}
 
 	body.LocalPort = binary.BigEndian.Uint16(data[16:18])
 	body.RemotePort = binary.BigEndian.Uint16(data[18:20])
 
 	data = data[20:]
-	sentopen, err := bgp.ParseBGPMessage(data)
+	sentopen, err := bgp.ParseBGPMessage(data, options...)
 	if err != nil {
 		return err
 	}
 	body.SentOpenMsg = sentopen
 	data = data[body.SentOpenMsg.Header.Len:]
-	body.ReceivedOpenMsg, err = bgp.ParseBGPMessage(data)
+	body.ReceivedOpenMsg, err = bgp.ParseBGPMessage(data, options...)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (body *BMPPeerUpNotification) Serialize() ([]byte, error) {
+func (body *BMPPeerUpNotification) Serialize(options ...*bgp.MarshallingOption) ([]byte, error) {
 	buf := make([]byte, 20)
 	if body.LocalAddress.To4() != nil {
 		copy(buf[12:16], body.LocalAddress.To4())
@@ -520,9 +536,9 @@ func (body *BMPPeerUpNotification) Serialize() ([]byte, error) {
 	binary.BigEndian.PutUint16(buf[16:18], body.LocalPort)
 	binary.BigEndian.PutUint16(buf[18:20], body.RemotePort)
 
-	m, _ := body.SentOpenMsg.Serialize()
+	m, _ := body.SentOpenMsg.Serialize(options...)
 	buf = append(buf, m...)
-	m, _ = body.ReceivedOpenMsg.Serialize()
+	m, _ = body.ReceivedOpenMsg.Serialize(options...)
 	buf = append(buf, m...)
 	return buf, nil
 }
@@ -611,7 +627,7 @@ func NewBMPInitiation(info []BMPInfoTLVInterface) *BMPMessage {
 	}
 }
 
-func (body *BMPInitiation) ParseBody(msg *BMPMessage, data []byte) error {
+func (body *BMPInitiation) ParseBody(msg *BMPMessage, data []byte, options ...*bgp.MarshallingOption) error {
 	for len(data) >= 4 {
 		tl := BMPInfoTLV{
 			Type:   binary.BigEndian.Uint16(data[0:2]),
@@ -637,7 +653,7 @@ func (body *BMPInitiation) ParseBody(msg *BMPMessage, data []byte) error {
 	return nil
 }
 
-func (body *BMPInitiation) Serialize() ([]byte, error) {
+func (body *BMPInitiation) Serialize(options ...*bgp.MarshallingOption) ([]byte, error) {
 	buf := make([]byte, 0)
 	for _, tlv := range body.Info {
 		b, err := tlv.Serialize()
@@ -766,7 +782,7 @@ func NewBMPTermination(info []BMPTermTLVInterface) *BMPMessage {
 	}
 }
 
-func (body *BMPTermination) ParseBody(msg *BMPMessage, data []byte) error {
+func (body *BMPTermination) ParseBody(msg *BMPMessage, data []byte, options ...*bgp.MarshallingOption) error {
 	for len(data) >= 4 {
 		tl := BMPTermTLV{
 			Type:   binary.BigEndian.Uint16(data[0:2]),
@@ -794,7 +810,7 @@ func (body *BMPTermination) ParseBody(msg *BMPMessage, data []byte) error {
 	return nil
 }
 
-func (body *BMPTermination) Serialize() ([]byte, error) {
+func (body *BMPTermination) Serialize(options ...*bgp.MarshallingOption) ([]byte, error) {
 	buf := make([]byte, 0)
 	for _, tlv := range body.Info {
 		b, err := tlv.Serialize()
@@ -929,7 +945,7 @@ func NewBMPRouteMirroring(p BMPPeerHeader, info []BMPRouteMirrTLVInterface) *BMP
 	}
 }
 
-func (body *BMPRouteMirroring) ParseBody(msg *BMPMessage, data []byte) error {
+func (body *BMPRouteMirroring) ParseBody(msg *BMPMessage, data []byte, options ...*bgp.MarshallingOption) error {
 	for len(data) >= 4 {
 		tl := BMPRouteMirrTLV{
 			Type:   binary.BigEndian.Uint16(data[0:2]),
@@ -957,7 +973,7 @@ func (body *BMPRouteMirroring) ParseBody(msg *BMPMessage, data []byte) error {
 	return nil
 }
 
-func (body *BMPRouteMirroring) Serialize() ([]byte, error) {
+func (body *BMPRouteMirroring) Serialize(options ...*bgp.MarshallingOption) ([]byte, error) {
 	buf := make([]byte, 0)
 	for _, tlv := range body.Info {
 		b, err := tlv.Serialize()
@@ -973,8 +989,8 @@ type BMPBody interface {
 	// Sigh, some body messages need a BMPHeader to parse the body
 	// data so we need to pass BMPHeader (avoid DecodeFromBytes
 	// function name).
-	ParseBody(*BMPMessage, []byte) error
-	Serialize() ([]byte, error)
+	ParseBody(*BMPMessage, []byte, ...*bgp.MarshallingOption) error
+	Serialize(...*bgp.MarshallingOption) ([]byte, error)
 }
 
 type BMPMessage struct {
@@ -983,7 +999,7 @@ type BMPMessage struct {
 	Body       BMPBody
 }
 
-func (msg *BMPMessage) Serialize() ([]byte, error) {
+func (msg *BMPMessage) Serialize(options ...*bgp.MarshallingOption) ([]byte, error) {
 	buf := make([]byte, 0)
 	if msg.Header.Type != BMP_MSG_INITIATION && msg.Header.Type != BMP_MSG_TERMINATION {
 		p, err := msg.PeerHeader.Serialize()
@@ -993,7 +1009,7 @@ func (msg *BMPMessage) Serialize() ([]byte, error) {
 		buf = append(buf, p...)
 	}
 
-	b, err := msg.Body.Serialize()
+	b, err := msg.Body.Serialize(options...)
 	if err != nil {
 		return nil, err
 	}
@@ -1025,6 +1041,14 @@ const (
 )
 
 func ParseBMPMessage(data []byte) (msg *BMPMessage, err error) {
+	return parseBMPMessage(data, nil)
+}
+
+func ParseBMPMessageWithOptions(data []byte, options func(BMPPeerHeader) []*bgp.MarshallingOption) (msg *BMPMessage, err error) {
+	return parseBMPMessage(data, options)
+}
+
+func parseBMPMessage(data []byte, optionsFunc func(BMPPeerHeader) []*bgp.MarshallingOption) (msg *BMPMessage, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("not all data bytes are available")
@@ -1057,12 +1081,15 @@ func ParseBMPMessage(data []byte) (msg *BMPMessage, err error) {
 		return nil, fmt.Errorf("unsupported BMP message type: %d", msg.Header.Type)
 	}
 
+	var options []*bgp.MarshallingOption
 	if msg.Header.Type != BMP_MSG_INITIATION && msg.Header.Type != BMP_MSG_TERMINATION {
 		msg.PeerHeader.DecodeFromBytes(data)
 		data = data[BMP_PEER_HEADER_SIZE:]
+		if optionsFunc != nil {
+			options = optionsFunc(msg.PeerHeader)
+		}
 	}
-
-	err = msg.Body.ParseBody(msg, data)
+	err = msg.Body.ParseBody(msg, data, options...)
 	if err != nil {
 		if msg.Header.Type == BMP_MSG_ROUTE_MONITORING {
 			return msg, err
@@ -1078,12 +1105,12 @@ func SplitBMP(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	if atEOF && len(data) == 0 || len(data) < BMP_HEADER_SIZE {
 		return 0, nil, nil
 	}
-
-	msg := &BMPMessage{}
-	msg.Header.DecodeFromBytes(data)
-	if uint32(len(data)) < msg.Header.Length {
+	tmpHdr := &BMPHeader{}
+	if err = tmpHdr.DecodeFromBytes(data[:BMP_HEADER_SIZE]); err != nil {
 		return 0, nil, nil
 	}
-
-	return int(msg.Header.Length), data[0:msg.Header.Length], nil
+	if len(data) < int(tmpHdr.Length) {
+		return 0, nil, nil
+	}
+	return int(tmpHdr.Length), data[0:tmpHdr.Length], nil
 }
