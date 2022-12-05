@@ -1777,9 +1777,9 @@ func (s *BgpServer) EnableZebra(ctx context.Context, r *api.EnableZebraRequest) 
 		if s.zclient != nil {
 			return fmt.Errorf("already connected to Zebra")
 		}
-
+		software := zebra.NewSoftware(uint8(r.Version), r.SoftwareName)
 		for _, p := range r.RouteTypes {
-			if _, err := zebra.RouteTypeFromString(p, uint8(r.Version), r.SoftwareName); err != nil {
+			if _, err := zebra.RouteTypeFromString(p, uint8(r.Version), software); err != nil {
 				return err
 			}
 		}
@@ -1789,7 +1789,7 @@ func (s *BgpServer) EnableZebra(ctx context.Context, r *api.EnableZebraRequest) 
 			protos = append(protos, string(p))
 		}
 		var err error
-		s.zclient, err = newZebraClient(s, r.Url, protos, uint8(r.Version), r.NexthopTriggerEnable, uint8(r.NexthopTriggerDelay), r.MplsLabelRangeSize, r.SoftwareName)
+		s.zclient, err = newZebraClient(s, r.Url, protos, uint8(r.Version), r.NexthopTriggerEnable, uint8(r.NexthopTriggerDelay), r.MplsLabelRangeSize, software)
 		return err
 	}, false)
 }
@@ -2130,6 +2130,11 @@ func (s *BgpServer) AddPath(ctx context.Context, r *api.AddPathRequest) (*api.Ad
 	}
 	var uuidBytes []byte
 	err := s.mgmtOperation(func() error {
+		id, err := uuid.NewRandom()
+		if err != nil {
+			return err
+		}
+
 		path, err := api2Path(r.TableType, r.Path, false)
 		if err != nil {
 			return err
@@ -2138,10 +2143,9 @@ func (s *BgpServer) AddPath(ctx context.Context, r *api.AddPathRequest) (*api.Ad
 		if err != nil {
 			return err
 		}
-		if id, err := uuid.NewRandom(); err == nil {
-			s.uuidMap[pathTokey(path)] = id
-			uuidBytes, _ = id.MarshalBinary()
-		}
+
+		s.uuidMap[pathTokey(path)] = id
+		uuidBytes, _ = id.MarshalBinary()
 		return nil
 	}, true)
 	return &api.AddPathResponse{Uuid: uuidBytes}, err
@@ -2239,7 +2243,7 @@ func (s *BgpServer) StartBgp(ctx context.Context, r *api.StartBgpRequest) error 
 		}
 
 		if c.Config.Port > 0 {
-			acceptCh := make(chan *net.TCPConn, 4096)
+			acceptCh := make(chan *net.TCPConn, 32)
 			for _, addr := range c.Config.LocalAddressList {
 				l, err := newTCPListener(s.logger, addr, uint32(c.Config.Port), g.BindToDevice, acceptCh)
 				if err != nil {
@@ -2673,7 +2677,7 @@ func (s *BgpServer) ListPath(ctx context.Context, r *api.ListPathRequest, fn fun
 			}
 			knownPathList := dst.GetAllKnownPathList()
 			for i, path := range knownPathList {
-				p := toPathApi(path, getValidation(v, path), r.EnableNlriBinary, r.EnableAttributeBinary)
+				p := toPathApi(path, getValidation(v, path), r.EnableOnlyBinary, r.EnableNlriBinary, r.EnableAttributeBinary)
 				if !table.SelectionOptions.DisableBestPathSelection {
 					if i == 0 {
 						switch r.TableType {
@@ -4031,7 +4035,7 @@ func (s *BgpServer) WatchEvent(ctx context.Context, r *api.WatchEventRequest, fn
 				case *watchEventUpdate:
 					paths := make([]*api.Path, 0)
 					for _, path := range msg.PathList {
-						paths = append(paths, toPathApi(path, nil, false, false))
+						paths = append(paths, toPathApi(path, nil, false, false, false))
 					}
 
 					fn(&api.WatchEventResponse{
@@ -4049,11 +4053,11 @@ func (s *BgpServer) WatchEvent(ctx context.Context, r *api.WatchEventRequest, fn
 							l = append(l, p...)
 						}
 						for _, p := range l {
-							pl = append(pl, toPathApi(p, nil, false, false))
+							pl = append(pl, toPathApi(p, nil, false, false, false))
 						}
 					} else {
 						for _, p := range msg.PathList {
-							pl = append(pl, toPathApi(p, nil, false, false))
+							pl = append(pl, toPathApi(p, nil, false, false, false))
 						}
 					}
 					fn(&api.WatchEventResponse{
@@ -4345,6 +4349,9 @@ func (w *watcher) notify(v watchEvent) {
 
 func (w *watcher) loop() {
 	for ev := range w.ch.Out() {
+		if ev == nil {
+			break
+		}
 		w.realCh <- ev.(watchEvent)
 	}
 	close(w.realCh)
