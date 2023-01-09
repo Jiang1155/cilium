@@ -1502,6 +1502,22 @@ drop_err:
 				      METRIC_EGRESS);
 }
 
+__section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV4_NODEPORT_BKLOCAL_DSR)
+int tail_nodeport_ipv4_bklocal_dsr(struct __ctx_buff *ctx)
+{
+	void *data, *data_end;
+	int ret = 0;
+	struct iphdr *ip4;
+
+	if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+		ret = DROP_INVALID;
+	}
+	
+	printk("jiang: in bklocal dsr, ctx %lx", (unsigned long)ctx);
+
+	return 0;
+}
+
 __section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV4_NODEPORT_DSR)
 int tail_nodeport_ipv4_dsr(struct __ctx_buff *ctx)
 {
@@ -1870,6 +1886,8 @@ redo_local:
 		}
 		return DROP_MISSED_TAIL_CALL;
 	}
+
+	ep_tail_call(ctx, CILIUM_CALL_IPV4_NODEPORT_BKLOCAL_DSR);
 
 	ctx_set_xfer(ctx, XFER_PKT_NO_SVC);
 
