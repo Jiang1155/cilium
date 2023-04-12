@@ -23,7 +23,7 @@ jobs:
     name: Lint image build logic
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579
+      - uses: actions/checkout@83b7061638ee4956cf7545a6f7efe594e5ad0247
         with:
           persist-credentials: false
 
