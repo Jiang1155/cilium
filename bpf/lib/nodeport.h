@@ -1908,6 +1908,9 @@ static __always_inline int nodeport_lb4(struct __ctx_buff *ctx,
 
 	cilium_capture_in(ctx);
 
+#ifdef ENABLE_LBONLY
+	printk("jiang, in lb only mode");
+#endif
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
 
