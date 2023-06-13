@@ -82,7 +82,7 @@ jobs:
 
       - name: Release build cilium-runtime
         if: ${{ steps.cilium-runtime-tag-in-repositories.outputs.exists == 'false' }}
-        uses: docker/build-push-action@c56af957549030174b10d6867f20e78cfd7debc5
+        uses: docker/build-push-action@2eb1c1961a95fc15694676618e422e8ba1d63825
         id: docker_build_release_runtime
         with:
           context: ./images/runtime
@@ -148,7 +148,7 @@ jobs:
 
       - name: Release build cilium-builder
         if: ${{ steps.cilium-builder-tag-in-repositories.outputs.exists == 'false' }}
-        uses: docker/build-push-action@c56af957549030174b10d6867f20e78cfd7debc5
+        uses: docker/build-push-action@2eb1c1961a95fc15694676618e422e8ba1d63825
         id: docker_build_release_builder
         with:
           context: ./images/builder
