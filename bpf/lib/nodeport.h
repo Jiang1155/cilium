@@ -1932,7 +1932,12 @@ static __always_inline int nodeport_lb4(struct __ctx_buff *ctx,
 
 	svc = lb4_lookup_service(&key, false, false);
 	if (svc) {
-		const bool skip_l3_xlate = DSR_ENCAP_MODE == DSR_ENCAP_IPIP;
+		//const bool skip_l3_xlate = DSR_ENCAP_MODE == DSR_ENCAP_IPIP;
+#ifdef ENABLE_LBONLY
+	const bool skip_l3_xlate = true;
+#else
+	const bool skip_l3_xlate = false;
+#endif
 
 		if (!lb4_src_range_ok(svc, ip4->saddr))
 			return DROP_NOT_IN_SRC_RANGE;
