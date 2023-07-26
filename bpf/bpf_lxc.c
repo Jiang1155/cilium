@@ -1803,7 +1803,8 @@ ipv4_policy(struct __ctx_buff *ctx, int ifindex, __u32 src_label, enum ct_status
 
 skip_policy_enforcement:
 #ifdef ENABLE_NODEPORT
-	if (ret == CT_NEW || ret == CT_REOPENED) {
+	//if (ret == CT_NEW || ret == CT_REOPENED) {
+	{
 		bool dsr = false;
 # ifdef ENABLE_DSR
 		int ret2;

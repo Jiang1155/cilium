@@ -1467,6 +1467,75 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 	void *data, *data_end;
 	struct iphdr *ip4;
 
+#if DSR_ENCAP_MODE == DSR_ENCAP_IPIP
+	{
+		struct iphdr iph_inner __maybe_unused;
+		__be32 sum __maybe_unused = 0;
+		__u16 __maybe_unused tot_len = 0;
+		__be16 dport __maybe_unused = 0;
+
+		struct
+		{
+			__be16 tot_len;
+			__be16 id;
+			__be16 frag_off;
+			__u8 ttl;
+			__u8 protocol;
+			__be32 saddr;
+			__be32 daddr;
+		} tp_old = {}, tp_new = {};
+
+		if (!revalidate_data(ctx, &data, &data_end, &ip4))
+			return DROP_INVALID;
+
+		*dsr = false;
+
+		tp_old.tot_len = ip4->tot_len;
+		tp_old.ttl = ip4->ttl;
+		tp_old.protocol = ip4->protocol;
+		tp_old.saddr = ip4->saddr;
+		tp_old.daddr = ip4->daddr;
+
+
+		if (ip4->protocol == IPPROTO_IPIP) {
+			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
+					   &iph_inner, sizeof(iph_inner)) < 0)
+				return DROP_INVALID;
+
+			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr) * 2 + 2,
+					   &dport, sizeof(dport)) < 0)
+				return DROP_INVALID;
+
+			tot_len = bpf_ntohs(iph_inner.tot_len) - iph_inner.ihl * 4;
+
+			tp_new.tot_len = bpf_htons(tot_len);
+			tp_new.ttl = ip4->ttl;
+			tp_new.protocol = iph_inner.protocol;
+			tp_new.saddr = ip4->saddr;
+			tp_new.daddr = ip4->daddr;
+
+			sum = csum_diff(&tp_old, 16, &tp_new, 16, sum);
+
+			/* this will remove inner iph */
+			if (ctx_adjust_hroom(ctx, -(iph_inner.ihl * 4),
+					     BPF_ADJ_ROOM_NET,
+					     ctx_adjust_hroom_dsr_flags()) < 0) {
+				return DROP_INVALID;
+			}
+
+			if (l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
+					    0, sum, 0) < 0)
+				return DROP_CSUM_L3;
+
+			*dsr = true;
+			if (snat_v4_create_dsr(ctx, bpf_ntohl(iph_inner.daddr),
+					       bpf_ntohs(dport)) < 0)
+				return DROP_INVALID;
+		}
+	}
+
+#elif DSR_ENCAP_MODE == DSR_ENCAP_NONE
+
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
 
@@ -1499,7 +1568,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 				return DROP_INVALID;
 		}
 	}
-
+#endif /* DSR_ENCAP_MODE */
 	return 0;
 }
 
