@@ -1484,10 +1484,11 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 			__be32 saddr;
 			__be32 daddr;
 		} tp_old = {}, tp_new = {};
+		printk("jiang, begin dsr");
 
 		if (!revalidate_data(ctx, &data, &data_end, &ip4))
 			return DROP_INVALID;
-
+		printk("jiang, after validate data");
 		*dsr = false;
 
 		tp_old.tot_len = ip4->tot_len;
@@ -1498,6 +1499,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 
 
 		if (ip4->protocol == IPPROTO_IPIP) {
+			printk("jiang, got ipip");
 			if (ctx_load_bytes(ctx, ETH_HLEN + sizeof(struct iphdr),
 					   &iph_inner, sizeof(iph_inner)) < 0)
 				return DROP_INVALID;
@@ -1516,6 +1518,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 
 			sum = csum_diff(&tp_old, 16, &tp_new, 16, sum);
 
+			printk("jiang, before adjust hroom");
 			/* this will remove inner iph */
 			if (ctx_adjust_hroom(ctx, -(iph_inner.ihl * 4),
 					     BPF_ADJ_ROOM_NET,
@@ -1523,10 +1526,13 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 				return DROP_INVALID;
 			}
 
+			printk("jiang, before replace csum");
+
 			if (l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
 					    0, sum, 0) < 0)
 				return DROP_CSUM_L3;
-
+			
+			printk("jiang, before setup nat");
 			*dsr = true;
 			if (snat_v4_create_dsr(ctx, bpf_ntohl(iph_inner.daddr),
 					       bpf_ntohs(dport)) < 0)
