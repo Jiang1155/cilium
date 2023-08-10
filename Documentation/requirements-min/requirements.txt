@@ -15,7 +15,7 @@ git+https://github.com/cilium/openapi.git@mdinclude#egg=sphinxcontrib-openapi
 sphinx-tabs==3.4.0
 sphinx-version-warning==1.1.2
 sphinxcontrib-spelling==7.7.0
-sphinxcontrib-websupport==1.2.4
+sphinxcontrib-websupport==1.2.6
 
 # Linters
 rstcheck==6.1.1
