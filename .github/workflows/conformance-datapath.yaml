@@ -220,7 +220,7 @@ jobs:
           docker rm $cid
 
       - name: Provision LVH VMs
-        uses: cilium/little-vm-helper@c3dbeb9d505b31aa5e960ebb258f4dd5f96f0202
+        uses: cilium/little-vm-helper@5fec6024949c4d296237159279db8a7380f32bbc
         with:
           test-name: datapath-conformance
           image-version: ${{ matrix.kernel }}
@@ -240,7 +240,7 @@ jobs:
           done
 
       - name: Run kube-proxy tests
-        uses: cilium/little-vm-helper@c3dbeb9d505b31aa5e960ebb258f4dd5f96f0202
+        uses: cilium/little-vm-helper@5fec6024949c4d296237159279db8a7380f32bbc
         with:
           provision: 'false'
           cmd: |
@@ -258,7 +258,7 @@ jobs:
 
       - name: Run encryption tests
         if: ${{ matrix.encryption != 'disabled' }}
-        uses: cilium/little-vm-helper@c3dbeb9d505b31aa5e960ebb258f4dd5f96f0202
+        uses: cilium/little-vm-helper@5fec6024949c4d296237159279db8a7380f32bbc
         with:
           provision: 'false'
           cmd: |
@@ -276,7 +276,7 @@ jobs:
 
       - name: Fetch artifacts
         if: ${{ !success() }}
-        uses: cilium/little-vm-helper@c3dbeb9d505b31aa5e960ebb258f4dd5f96f0202
+        uses: cilium/little-vm-helper@5fec6024949c4d296237159279db8a7380f32bbc
         with:
           provision: 'false'
           cmd: |
