@@ -1509,7 +1509,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 					   &dport, sizeof(dport)) < 0)
 				return DROP_INVALID;
 
-			tot_len = bpf_ntohs(iph_inner.tot_len) - iph_inner.ihl * 4;
+			tot_len = bpf_ntohs(iph_inner.tot_len);
 
 			tp_new.tot_len = bpf_htons(tot_len);
 			tp_new.ttl = ip4->ttl;
