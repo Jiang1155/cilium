@@ -1812,7 +1812,8 @@ skip_policy_enforcement:
 		ret2 = handle_dsr_v4(ctx, &dsr);
 		if (ret2 != 0)
 			return ret2;
-
+			
+		printk("jiang: after handle dsr");
 		ct_state_new.dsr = dsr;
 		if (ret == CT_REOPENED && ct_state->dsr != dsr)
 			ct_update4_dsr(get_ct_map4(tuple), tuple, dsr);

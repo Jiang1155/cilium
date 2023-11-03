@@ -1473,6 +1473,7 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 		__be32 sum __maybe_unused = 0;
 		__u16 __maybe_unused tot_len = 0;
 		__be16 dport __maybe_unused = 0;
+		const int l3_off __maybe_unused = ETH_HLEN;
 
 		struct
 		{
@@ -1526,6 +1527,16 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 				return DROP_INVALID;
 			}
 
+			printk("jiang, before change totlen and protocol");
+			//change tot len and protocl
+			if (ctx_store_bytes(ctx, l3_off + offsetof(struct iphdr, tot_len),
+			    &tp_new.tot_len, 2, 0) < 0)
+				return DROP_WRITE_ERROR;
+			
+			if (ctx_store_bytes(ctx, l3_off + offsetof(struct iphdr, protocol),
+			    &tp_new.protocol, 1, 0) < 0)
+				return DROP_WRITE_ERROR;
+
 			printk("jiang, before replace csum");
 
 			if (l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
@@ -1535,8 +1546,10 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 			printk("jiang, before setup nat");
 			*dsr = true;
 			if (snat_v4_create_dsr(ctx, bpf_ntohl(iph_inner.daddr),
-					       bpf_ntohs(dport)) < 0)
+					       bpf_ntohs(dport)) < 0) {
+				printk("jiang: setup nat failed");
 				return DROP_INVALID;
+			}
 		}
 	}
 

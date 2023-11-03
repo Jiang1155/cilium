@@ -522,8 +522,10 @@ static __always_inline __maybe_unused int snat_v4_create_dsr(struct __ctx_buff *
 
 	build_bug_on(sizeof(struct ipv4_nat_entry) > 64);
 
-	if (!revalidate_data(ctx, &data, &data_end, &ip4))
+	if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+		printk("jiang. vaildate failed");
 		return DROP_INVALID;
+	}
 
 	tuple.nexthdr = ip4->protocol;
 	tuple.daddr = ip4->saddr;
@@ -547,6 +549,7 @@ static __always_inline __maybe_unused int snat_v4_create_dsr(struct __ctx_buff *
 		/* NodePort svc can be reached only via TCP or UDP, so
 		 * drop the rest.
 		 */
+		printk("jiang. unsupport prot");
 		return DROP_NAT_UNSUPP_PROTO;
 	}
 
@@ -555,8 +558,10 @@ static __always_inline __maybe_unused int snat_v4_create_dsr(struct __ctx_buff *
 	state.to_sport = to_sport;
 
 	ret = map_update_elem(&SNAT_MAPPING_IPV4, &tuple, &state, 0);
-	if (ret)
+	if (ret) {
+		printk("jiang: update map failed");
 		return ret;
+	}
 
 	return CTX_ACT_OK;
 }
