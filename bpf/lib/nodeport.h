@@ -1473,6 +1473,8 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 		__be32 sum __maybe_unused = 0;
 		__u16 __maybe_unused tot_len = 0;
 		__be16 dport __maybe_unused = 0;
+		__be16 dport2 __maybe_unused = 0;
+		__be32 address __maybe_unused = 0;
 		const int l3_off __maybe_unused = ETH_HLEN;
 
 		struct
@@ -1543,10 +1545,13 @@ static __always_inline int handle_dsr_v4(struct __ctx_buff *ctx, bool *dsr)
 					    0, sum, 0) < 0)
 				return DROP_CSUM_L3;
 			
-			printk("jiang, before setup nat");
+			printk("jiang, before setup nat, daddr %x, dport %x", iph_inner.daddr, dport );
 			*dsr = true;
-			if (snat_v4_create_dsr(ctx, bpf_ntohl(iph_inner.daddr),
-					       bpf_ntohs(dport)) < 0) {
+			dport2 = bpf_ntohs(dport);
+			address = bpf_ntohl(iph_inner.daddr);
+			printk("jiang, before setup nat2, daddr %x, dport %x", address, dport2 );
+			if (snat_v4_create_dsr(ctx, iph_inner.daddr,
+					       dport) < 0) {
 				printk("jiang: setup nat failed");
 				return DROP_INVALID;
 			}
@@ -2175,6 +2180,7 @@ redo:
 		ctx_store_meta(ctx, CB_PORT, key.dport);
 		ctx_store_meta(ctx, CB_ADDR_V4, key.address);
 #endif /* DSR_ENCAP_MODE */
+		printk("jiang: before call nodeport dsr");
 		ep_tail_call(ctx, CILIUM_CALL_IPV4_NODEPORT_DSR);
 	} else {
 		ep_tail_call(ctx, CILIUM_CALL_IPV4_NODEPORT_NAT_EGRESS);

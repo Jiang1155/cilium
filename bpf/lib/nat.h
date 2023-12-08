@@ -522,6 +522,8 @@ static __always_inline __maybe_unused int snat_v4_create_dsr(struct __ctx_buff *
 
 	build_bug_on(sizeof(struct ipv4_nat_entry) > 64);
 
+	printk("jiang. create nat to addr %x, to port %x", to_saddr, to_sport);
+
 	if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
 		printk("jiang. vaildate failed");
 		return DROP_INVALID;
