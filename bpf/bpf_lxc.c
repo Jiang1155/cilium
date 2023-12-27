@@ -906,6 +906,7 @@ ct_recreate4:
 #ifdef ENABLE_NODEPORT
 # ifdef ENABLE_DSR
 		if (ct_state->dsr) {
+			printk("jiang: dsr is enabled, ip %x", tuple->daddr);
 			ret = xlate_dsr_v4(ctx, tuple, l4_off, has_l4_header);
 			if (ret != 0)
 				return ret;
@@ -1813,7 +1814,7 @@ skip_policy_enforcement:
 		if (ret2 != 0)
 			return ret2;
 			
-		printk("jiang: after handle dsr");
+		printk("jiang: after handle dsr, dsr %d, ip %x", dsr, tuple->daddr);
 		ct_state_new.dsr = dsr;
 		if (ret == CT_REOPENED && ct_state->dsr != dsr)
 			ct_update4_dsr(get_ct_map4(tuple), tuple, dsr);
