@@ -1809,6 +1809,7 @@ skip_policy_enforcement:
 		bool dsr = false;
 # ifdef ENABLE_DSR
 		int ret2;
+		int l4_off __maybe_unused;
 
 		ret2 = handle_dsr_v4(ctx, &dsr);
 		if (ret2 != 0)
@@ -1822,11 +1823,13 @@ skip_policy_enforcement:
 #if DSR_ENCAP_MODE == DSR_ENCAP_IPIP
 		if (!revalidate_data(ctx, &data, &data_end, &ip4))
 			return DROP_INVALID;
-		tuple.nexthdr = ip4->protocol;
-		tuple.daddr = ip4->daddr;
-		tuple.saddr = ip4->saddr;
+		tuple->nexthdr = ip4->protocol;
+		tuple->daddr = ip4->daddr;
+		tuple->saddr = ip4->saddr;
 
-		ret = ct_lookup4(get_ct_map4(&tuple), &tuple, ctx, l4_off, CT_INGRESS, &ct_state,
+		l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+
+		ret = ct_lookup4(get_ct_map4(tuple), tuple, ctx, l4_off, CT_INGRESS, ct_state,
 				 &monitor);
 		if (ret < 0)
 			return ret;
