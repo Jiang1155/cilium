@@ -637,7 +637,8 @@ ipv4_extract_tuple(struct __ctx_buff *ctx, struct ipv4_ct_tuple *tuple,
 #ifdef ENABLE_SCTP
 			 tuple->nexthdr != IPPROTO_SCTP &&
 #endif  /* ENABLE_SCTP */
-		     tuple->nexthdr != IPPROTO_UDP))
+		     tuple->nexthdr != IPPROTO_UDP &&
+		     tuple->nexthdr != IPPROTO_IPIP))
 		return DROP_CT_UNKNOWN_PROTO;
 
 	tuple->daddr = ip4->daddr;
@@ -745,7 +746,17 @@ ct_extract_ports4(struct __ctx_buff *ctx, struct iphdr *ip4, int off,
 			}
 		}
 		break;
+	case IPPROTO_IPIP:
+		if (1) {
+			__u8 ver_ihl;
+			__u8 ihl;
 
+			if (ctx_load_bytes(ctx, off, &ver_ihl, 1) < 0)
+				return DROP_CT_INVALID_HDR;
+			ihl = (ver_ihl & 0x0f);
+			off = off + (ihl << 2);
+		}
+		/* fall through, assume either tcp or udp */
 	/* TCP, UDP, and SCTP all have the ports at the same location */
 	case IPPROTO_TCP:
 	case IPPROTO_UDP:
