@@ -1846,7 +1846,7 @@ int tail_nodeport_nat_ingress_ipv4(struct __ctx_buff *ctx)
 	 * CALL_IPV4_FROM_NETDEV in the code above.
 	 */
 #if !defined(ENABLE_DSR) || (defined(ENABLE_DSR) && defined(ENABLE_DSR_HYBRID)) ||	\
-    (defined(ENABLE_EGRESS_GATEWAY) && !defined(TUNNEL_MODE))
+    (defined(ENABLE_EGRESS_GATEWAY) && !defined(TUNNEL_MODE)) || defined(ENABLE_NODEPORT_SNAT)
 	/* If we're not in full DSR mode, reply traffic from remote backends
 	 * might pass back through the LB node and requires revDNAT.
 	 *
@@ -2082,7 +2082,7 @@ skip_service_lookup:
 		 */
 		ctx_set_xfer(ctx, XFER_PKT_NO_SVC);
 
-#ifndef ENABLE_MASQUERADE
+#if !defined(ENABLE_MASQUERADE) && !defined(ENABLE_NODEPORT_SNAT)
 		if (nodeport_uses_dsr4(&tuple))
 			return CTX_ACT_OK;
 #endif
@@ -2118,7 +2118,7 @@ skip_service_lookup:
 	/* Reply from DSR packet is never seen on this node again
 	 * hence no need to track in here.
 	 */
-	if (backend_local || !nodeport_uses_dsr4(&tuple)) {
+	if (backend_local || !nodeport_uses_dsr4(&tuple) || !lb4_svc_is_external_ip(svc)) {
 		struct ct_state ct_state = {};
 
 		ret = ct_lookup4(get_ct_map4(&tuple), &tuple, ctx, l4_off,
@@ -2159,7 +2159,7 @@ redo:
 
 	/* TX request to remote backend: */
 	edt_set_aggregate(ctx, 0);
-	if (nodeport_uses_dsr4(&tuple)) {
+	if (nodeport_uses_dsr4(&tuple) && lb4_svc_is_external_ip(svc)) {
 #if DSR_ENCAP_MODE == DSR_ENCAP_IPIP
 		ctx_store_meta(ctx, CB_HINT,
 			       ((__u32)tuple.sport << 16) | tuple.dport);
@@ -2180,7 +2180,6 @@ redo:
 		ctx_store_meta(ctx, CB_PORT, key.dport);
 		ctx_store_meta(ctx, CB_ADDR_V4, key.address);
 #endif /* DSR_ENCAP_MODE */
-		printk("jiang: before call nodeport dsr");
 		ep_tail_call(ctx, CILIUM_CALL_IPV4_NODEPORT_DSR);
 	} else {
 		ep_tail_call(ctx, CILIUM_CALL_IPV4_NODEPORT_NAT_EGRESS);

@@ -517,6 +517,10 @@ func (h *HeaderfileWriter) WriteNodeConfig(w io.Writer, cfg *datapath.LocalNodeC
 		cDefinesMap["ENABLE_HOST_FIREWALL"] = "1"
 	}
 
+	if option.Config.EnableNodePortSNAT {
+		cDefinesMap["ENABLE_NODEPORT_SNAT"] = "1"
+	}
+
 	if option.Config.EnableIPSec {
 		nodeAddress := node.GetIPv4()
 		if nodeAddress == nil {

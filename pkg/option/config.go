@@ -234,6 +234,9 @@ const (
 	// EnableHostFirewall enables network policies for the host
 	EnableHostFirewall = "enable-host-firewall"
 
+	// EnableNodePortSNAT set the nodeport always in snat mode, even if dsr is set.
+	EnableNodePortSNAT = "enable-nodport-snat"
+
 	// EnableHostPort enables HostPort forwarding implemented by Cilium in BPF
 	EnableHostPort = "enable-host-port"
 
@@ -1971,6 +1974,9 @@ type DaemonConfig struct {
 	// EnableHostFirewall enables network policies for the host
 	EnableHostFirewall bool
 
+	//EnableNodePortSNAT set the nodeport to always uses SNAT mode even gloabl dsr is set
+	EnableNodePortSNAT bool
+
 	// EnableLocalRedirectPolicy enables redirect policies to redirect traffic within nodes
 	EnableLocalRedirectPolicy bool
 
@@ -2902,6 +2908,7 @@ func (c *DaemonConfig) Populate(vp *viper.Viper) {
 	c.EnableMKE = vp.GetBool(EnableMKE)
 	c.CgroupPathMKE = vp.GetString(CgroupPathMKE)
 	c.EnableHostFirewall = vp.GetBool(EnableHostFirewall)
+	c.EnableNodePortSNAT = vp.GetBool(EnableNodePortSNAT)
 	c.EnableLocalRedirectPolicy = vp.GetBool(EnableLocalRedirectPolicy)
 	c.EncryptInterface = vp.GetStringSlice(EncryptInterface)
 	c.EncryptNode = vp.GetBool(EncryptNode)
