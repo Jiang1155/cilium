@@ -17,7 +17,7 @@ import (
 	"github.com/vishvananda/netlink/nl"
 )
 
-func xdpModeToFlag(xdpMode string) uint32 {
+func xdpConfigModeToFlag(xdpMode string) uint32 {
 	switch xdpMode {
 	case option.XDPModeNative:
 		return nl.XDP_FLAGS_DRV_MODE
@@ -26,6 +26,27 @@ func xdpModeToFlag(xdpMode string) uint32 {
 	case option.XDPModeLinkDriver:
 		return nl.XDP_FLAGS_DRV_MODE
 	case option.XDPModeLinkGeneric:
+		return nl.XDP_FLAGS_SKB_MODE
+	}
+	return 0
+}
+
+// These constant values are returned by the kernel when querying the XDP program attach mode.
+// Important: they differ from constants that are used when attaching an XDP program to a netlink device.
+const (
+	XDPAttachedNone uint32 = iota
+	XDPAttachedDriver
+	XDPAttachedGeneric
+)
+
+// xdpAttachedModeToFlag maps the attach mode that is returned in the metadata when
+// querying netlink devices to the attach flags that were used to configure the
+// xdp program attachement.
+func xdpAttachedModeToFlag(mode uint32) uint32 {
+	switch mode {
+	case XDPAttachedDriver:
+		return nl.XDP_FLAGS_DRV_MODE
+	case XDPAttachedGeneric:
 		return nl.XDP_FLAGS_SKB_MODE
 	}
 	return 0
@@ -51,8 +72,15 @@ func maybeUnloadObsoleteXDPPrograms(xdpDevs []string, xdpMode string) {
 
 		used := false
 		for _, xdpDev := range xdpDevs {
+			if link.Attrs().Name == xdpDev {
+				errs := fmt.Sprintf("linkxdp.AttachMode %d, attToflag %d,  xdpmodeToflag %d",
+					linkxdp.AttachMode, xdpAttachedModeToFlag(linkxdp.AttachMode), xdpConfigModeToFlag(xdpMode))
+				log.Error(errs)
+
+				//used = true
+			}
 			if link.Attrs().Name == xdpDev &&
-				linkxdp.Flags&xdpModeToFlag(xdpMode) != 0 {
+				xdpAttachedModeToFlag(linkxdp.AttachMode) == xdpConfigModeToFlag(xdpMode) {
 				// XDP mode matches; don't unload, otherwise we might introduce
 				// intermittent connectivity problems
 				used = true
@@ -60,8 +88,8 @@ func maybeUnloadObsoleteXDPPrograms(xdpDevs []string, xdpMode string) {
 			}
 		}
 		if !used {
-			netlink.LinkSetXdpFdWithFlags(link, -1, int(xdpModeToFlag(option.XDPModeLinkGeneric)))
-			netlink.LinkSetXdpFdWithFlags(link, -1, int(xdpModeToFlag(option.XDPModeLinkDriver)))
+			netlink.LinkSetXdpFdWithFlags(link, -1, int(xdpConfigModeToFlag(option.XDPModeLinkGeneric)))
+			netlink.LinkSetXdpFdWithFlags(link, -1, int(xdpConfigModeToFlag(option.XDPModeLinkDriver)))
 		}
 	}
 }
