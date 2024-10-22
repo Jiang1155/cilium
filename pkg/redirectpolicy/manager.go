@@ -48,8 +48,10 @@ type svcManager interface {
 
 type svcCache interface {
 	EnsureService(svcID k8s.ServiceID, swg *lock.StoppableWaitGroup) bool
+	GetServiceType(svcID k8s.ServiceID) lb.SVCType
 	GetServiceAddrsWithType(svcID k8s.ServiceID, svcType lb.SVCType) (map[lb.FEPortName][]*lb.L3n4Addr, int)
-	GetServiceFrontendIP(svcID k8s.ServiceID, svcType lb.SVCType) net.IP
+	GetServiceFrontendIP(svcID k8s.ServiceID) net.IP
+	GetServiceK8sExternalIPs(svcID k8s.ServiceID) []net.IP
 }
 
 type StoreGetter interface {
@@ -356,29 +358,13 @@ func (rpm *Manager) getAndUpsertPolicySvcConfig(config *LRPConfig) {
 	switch config.frontendType {
 	case svcFrontendAll:
 		// Get all the service frontends.
-		addrsByPort, feIPsCount := rpm.svcCache.GetServiceAddrsWithType(*config.serviceID,
-			lb.SVCTypeClusterIP)
-		config.frontendMappings = make([]*feMapping, 0, len(addrsByPort)*feIPsCount)
-		for p, addrs := range addrsByPort {
-			for _, addr := range addrs {
-				feM := &feMapping{
-					feAddr: addr,
-					fePort: string(p),
-				}
-				config.frontendMappings = append(config.frontendMappings, feM)
-			}
-			rpm.updateConfigSvcFrontend(config, addrs...)
-		}
+		rpm.handlePolicySvcFeAllConfigWithType(config, lb.SVCTypeClusterIP)
+		rpm.handlePolicySvcFeAllConfigWithType(config, lb.SVCTypeExternalIPs)
 
 	case svcFrontendSinglePort:
 		// Get service frontend with the clusterIP and the policy config (unnamed) port.
-		ip := rpm.svcCache.GetServiceFrontendIP(*config.serviceID, lb.SVCTypeClusterIP)
-		if ip == nil {
-			// The LRP will be applied when the selected service is added later.
-			return
-		}
-		config.frontendMappings[0].feAddr.IP = ip
-		rpm.updateConfigSvcFrontend(config, config.frontendMappings[0].feAddr)
+		rpm.handlePolicySvcFeSinglePortConfigWithType(config, lb.SVCTypeClusterIP)
+		rpm.handlePolicySvcFeSinglePortConfigWithType(config, lb.SVCTypeExternalIPs)
 
 	case svcFrontendNamedPorts:
 		// Get service frontends with the clusterIP and the policy config named ports.
@@ -386,7 +372,7 @@ func (rpm *Manager) getAndUpsertPolicySvcConfig(config *LRPConfig) {
 		for i, mapping := range config.frontendMappings {
 			ports[i] = mapping.fePort
 		}
-		ip := rpm.svcCache.GetServiceFrontendIP(*config.serviceID, lb.SVCTypeClusterIP)
+		ip := rpm.svcCache.GetServiceFrontendIP(*config.serviceID)
 		if ip == nil {
 			// The LRP will be applied when the selected service is added later.
 			return
@@ -400,6 +386,53 @@ func (rpm *Manager) getAndUpsertPolicySvcConfig(config *LRPConfig) {
 	pods := rpm.getLocalPodsForPolicy(config)
 	if len(pods) > 0 {
 		rpm.processConfig(config, pods...)
+	}
+}
+
+func (rpm *Manager) handlePolicySvcFeAllConfigWithType(config *LRPConfig, svcType lb.SVCType) {
+	var frontendMappings *[]*feMapping
+
+	// After GetServiceAddrsWithType, config.serviceType will be updated
+	addrsByPort, feIPsCount := rpm.svcCache.GetServiceAddrsWithType(*config.serviceID, svcType)
+	if svcType == lb.SVCTypeClusterIP {
+		config.frontendMappings = make([]*feMapping, 0, len(addrsByPort)*feIPsCount)
+		frontendMappings = &config.frontendMappings
+	} else if svcType == lb.SVCTypeExternalIPs {
+		config.externalIPFrontendMappings = make([]*feMapping, 0, len(addrsByPort)*feIPsCount)
+		frontendMappings = &config.externalIPFrontendMappings
+	}
+
+	for p, addrs := range addrsByPort {
+		for _, addr := range addrs {
+			feM := &feMapping{
+				feAddr: addr,
+				fePort: string(p),
+			}
+			*frontendMappings = append(*frontendMappings, feM)
+		}
+		rpm.updateConfigSvcFrontend(config, addrs...)
+	}
+}
+
+func (rpm *Manager) handlePolicySvcFeSinglePortConfigWithType(config *LRPConfig, svcType lb.SVCType) {
+	if svcType == lb.SVCTypeClusterIP {
+		ip := rpm.svcCache.GetServiceFrontendIP(*config.serviceID)
+		if ip == nil {
+			// The LRP will be applied when the selected service is added later.
+			return
+		}
+		config.frontendMappings[0].feAddr.IP = ip
+		rpm.updateConfigSvcFrontend(config, config.frontendMappings[0].feAddr)
+	} else if svcType == lb.SVCTypeExternalIPs {
+		ips := rpm.svcCache.GetServiceK8sExternalIPs(*config.serviceID)
+		config.externalIPFrontendMappings = make([]*feMapping, 0, len(ips))
+
+		for _, ip := range ips {
+			fe := *config.frontendMappings[0]
+			fe.feAddr.IP = ip
+			config.externalIPFrontendMappings = append(config.externalIPFrontendMappings, &fe)
+			rpm.updateConfigSvcFrontend(config, fe.feAddr)
+		}
 	}
 }
 
@@ -654,48 +687,56 @@ func (rpm *Manager) processConfig(config *LRPConfig, pods ...*podMetadata) {
 // If a pod has multiple IPs, then there will be multiple backend entries created
 // for the pod with common <port, protocol>.
 func (rpm *Manager) processConfigWithSinglePort(config *LRPConfig, pods ...*podMetadata) {
-	var bes4 []backend
-	var bes6 []backend
-
 	// Generate and map pod backends to the policy frontend. The policy config
 	// is already sanitized, and has matching backend and frontend port protocol.
 	// We currently don't check which backends are updated before upserting a
 	// a service with the corresponding frontend. This can be optimized when LRPs
 	// are scaled up.
 	bePort := config.backendPorts[0]
-	feM := config.frontendMappings[0]
-	for _, pod := range pods {
-		for _, ip := range pod.ips {
-			beIP := net.ParseIP(ip)
-			if beIP == nil {
-				continue
-			}
-			be := backend{
-				lb.L3n4Addr{
-					IP: net.ParseIP(ip),
-					L4Addr: lb.L4Addr{
-						Protocol: bePort.l4Addr.Protocol,
-						Port:     bePort.l4Addr.Port,
-					},
-				}, pod.id,
-			}
-			if feM.feAddr.IP.To4() != nil && be.IP.To4() != nil {
-				if option.Config.EnableIPv4 {
-					bes4 = append(bes4, be)
+	feMUnion := make([]*feMapping, 0, 1 + len(config.externalIPFrontendMappings))
+	feMUnion = append(feMUnion, config.frontendMappings[0])
+	feMUnion = append(feMUnion, config.externalIPFrontendMappings...)
+
+	log.Info("config.externalIPFrontendMappings=", len(config.externalIPFrontendMappings))
+
+	for _, feM := range feMUnion {
+		for _, pod := range pods {
+			var (
+				bes4   []backend
+				bes6   []backend
+			)
+			for _, ip := range pod.ips {
+				beIP := net.ParseIP(ip)
+				if beIP == nil {
+					continue
 				}
-			} else if feM.feAddr.IP.To4() == nil && be.IP.To4() == nil {
-				if option.Config.EnableIPv6 {
-					bes6 = append(bes6, be)
+				be := backend{
+					lb.L3n4Addr{
+						IP: net.ParseIP(ip),
+						L4Addr: lb.L4Addr{
+							Protocol: bePort.l4Addr.Protocol,
+							Port:     bePort.l4Addr.Port,
+						},
+					}, pod.id,
 				}
+				if feM.feAddr.IP.To4() != nil && be.IP.To4() != nil {
+					if option.Config.EnableIPv4 {
+						bes4 = append(bes4, be)
+					}
+				} else if feM.feAddr.IP.To4() == nil && be.IP.To4() == nil {
+					if option.Config.EnableIPv6 {
+						bes6 = append(bes6, be)
+					}
+				}
+			}
+			if len(bes4) > 0 {
+				rpm.updateFrontendMapping(config, feM, pod.id, bes4)
+			} else if len(bes6) > 0 {
+				rpm.updateFrontendMapping(config, feM, pod.id, bes6)
 			}
 		}
-		if len(bes4) > 0 {
-			rpm.updateFrontendMapping(config, feM, pod.id, bes4)
-		} else if len(bes6) > 0 {
-			rpm.updateFrontendMapping(config, feM, pod.id, bes6)
-		}
+		rpm.upsertService(config, feM)
 	}
-	rpm.upsertService(config, feM)
 }
 
 // processConfigWithNamedPorts upserts policy config frontends to the corresponding

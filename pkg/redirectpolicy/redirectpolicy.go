@@ -69,6 +69,8 @@ type LRPConfig struct {
 	// frontendMappings is a slice of policy config frontend mappings that include
 	// frontend address, frontend port name, and a slice of its associated backends
 	frontendMappings []*feMapping
+	// frontendMappings for externalIP
+	externalIPFrontendMappings []*feMapping
 	// serviceID is the parsed service name and namespace
 	serviceID *k8s.ServiceID
 	// backendSelector is an endpoint selector generated from the parsed policy selector
